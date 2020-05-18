@@ -29,6 +29,7 @@ import org.apache.flink.api.java.operators.join.JoinType
 import org.apache.flink.api.java.typeutils.{ListTypeInfo, TupleTypeInfo}
 import org.apache.flink.api.java.tuple.{Tuple2 => JTuple2}
 import org.apache.flink.configuration.Configuration
+import org.apache.flink.metrics.{Meter, MeterView}
 import org.apache.flink.streaming.api.functions.co.CoProcessFunction
 import org.apache.flink.table.api.Types
 import org.apache.flink.table.codegen.Compiler
@@ -65,6 +66,10 @@ abstract class TimeBoundedStreamJoin(
   extends CoProcessFunction[CRow, CRow, CRow]
   with Compiler[FlatJoinFunction[Row, Row, Row]]
   with Logging {
+  private val LATE_ELEMENTS_LEFT_DROPPED_METRIC_NAME = "numLeftSideRecordsDropped"
+  private val LATE_ELEMENTS_LEFT_DROPPED_RATE_METRIC_NAME = "leftSideRecordsDroppedRate"
+  private val LATE_ELEMENTS_RIGHT_DROPPED_METRIC_NAME = "numRightSideRecordsDropped"
+  private val LATE_ELEMENTS_RIGHT_DROPPED_RATE_METRIC_NAME = "rightSideRecordsDroppedRate"
 
   private val paddingUtil: OuterJoinPaddingUtil =
     new OuterJoinPaddingUtil(leftType.getArity, rightType.getArity)
@@ -97,6 +102,14 @@ abstract class TimeBoundedStreamJoin(
 
   // Minimum interval by which state is cleaned up
   private val minCleanUpInterval = (leftRelativeSize + rightRelativeSize) / 2
+
+  // ------------------------------------------------------------------------
+  // Metrics
+  // ------------------------------------------------------------------------
+  @transient
+  private var leftSideRecordsDroppedRate: Meter = _
+  @transient
+  private var rightSideRecordsDroppedRate: Meter = _
 
   if (allowedLateness < 0) {
     throw new IllegalArgumentException("The allowed lateness must be non-negative.")
@@ -148,6 +161,18 @@ abstract class TimeBoundedStreamJoin(
     val rightTimerStateDesc: ValueStateDescriptor[Long] =
       new ValueStateDescriptor[Long]("WindowJoinRightTimerState", classOf[Long])
     rightTimerState = getRuntimeContext.getState(rightTimerStateDesc)
+
+    val metricGroup = getRuntimeContext.getMetricGroup
+    val numleftSideRecordsDropped = metricGroup.counter(LATE_ELEMENTS_LEFT_DROPPED_METRIC_NAME)
+    leftSideRecordsDroppedRate = getRuntimeContext.getMetricGroup.meter(
+      LATE_ELEMENTS_LEFT_DROPPED_RATE_METRIC_NAME,
+      new MeterView(numleftSideRecordsDropped, 60)
+    )
+    val numRightSideRecordsDropped = metricGroup.counter(LATE_ELEMENTS_RIGHT_DROPPED_METRIC_NAME)
+    rightSideRecordsDroppedRate = getRuntimeContext.getMetricGroup.meter(
+      LATE_ELEMENTS_RIGHT_DROPPED_RATE_METRIC_NAME,
+      new MeterView(numRightSideRecordsDropped, 60)
+    )
   }
 
   /**
@@ -242,6 +267,8 @@ abstract class TimeBoundedStreamJoin(
         // Emit a null padding result if the left row is not cached and successfully joined.
         joinCollector.collect(paddingUtil.padLeft(leftRow))
       }
+    } else if (!emitted) {
+      leftSideRecordsDroppedRate.markEvent()
     }
   }
 
@@ -334,6 +361,8 @@ abstract class TimeBoundedStreamJoin(
         // Emit a null padding result if the right row is not cached and successfully joined.
         joinCollector.collect(paddingUtil.padRight(rightRow))
       }
+    } else if (!emitted) {
+      rightSideRecordsDroppedRate.markEvent()
     }
   }
 

@@ -28,6 +28,10 @@ import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.typeutils.ListTypeInfo;
 import org.apache.flink.api.java.typeutils.TupleTypeInfo;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.Meter;
+import org.apache.flink.metrics.MeterView;
+import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.runtime.generated.GeneratedFunction;
@@ -51,6 +55,10 @@ import java.util.Map;
  */
 abstract class TimeBoundedStreamJoin extends KeyedCoProcessFunction<RowData, RowData, RowData, RowData> {
 	private static final Logger LOGGER = LoggerFactory.getLogger(TimeBoundedStreamJoin.class);
+	private static final String LATE_ELEMENTS_LEFT_DROPPED_METRIC_NAME = "numLeftSideRecordsDropped";
+	private static final String LATE_ELEMENTS_LEFT_DROPPED_RATE_METRIC_NAME = "leftSideRecordsDroppedRate";
+	private static final String LATE_ELEMENTS_RIGHT_DROPPED_METRIC_NAME = "numRightSideRecordsDropped";
+	private static final String LATE_ELEMENTS_RIGHT_DROPPED_RATE_METRIC_NAME = "rightSideRecordsDroppedRate";
 	private final FlinkJoinType joinType;
 	protected final long leftRelativeSize;
 	protected final long rightRelativeSize;
@@ -81,6 +89,12 @@ abstract class TimeBoundedStreamJoin extends KeyedCoProcessFunction<RowData, Row
 	// Points in time until which the respective cache has been cleaned.
 	private long leftExpirationTime = 0L;
 	private long rightExpirationTime = 0L;
+
+	// ------------------------------------------------------------------------
+	// Metrics
+	// ------------------------------------------------------------------------
+	private transient Meter lateLeftRecordsDroppedRate;
+	private transient Meter lateRightRecordsDroppedRate;
 
 	// Current time on the respective input stream.
 	protected long leftOperatorTime = 0L;
@@ -145,6 +159,16 @@ abstract class TimeBoundedStreamJoin extends KeyedCoProcessFunction<RowData, Row
 		rightTimerState = getRuntimeContext().getState(rightValueStateDescriptor);
 
 		paddingUtil = new OuterJoinPaddingUtil(leftType.getArity(), rightType.getArity());
+		// metrics
+		MetricGroup metrics = getRuntimeContext().getMetricGroup();
+		Counter numLeftLateRecordsDropped = metrics.counter(LATE_ELEMENTS_LEFT_DROPPED_METRIC_NAME);
+		this.lateLeftRecordsDroppedRate = metrics.meter(
+			LATE_ELEMENTS_LEFT_DROPPED_RATE_METRIC_NAME,
+			new MeterView(numLeftLateRecordsDropped, 60));
+		Counter numRightLateRecordsDropped = metrics.counter(LATE_ELEMENTS_RIGHT_DROPPED_METRIC_NAME);
+		this.lateRightRecordsDroppedRate = metrics.meter(
+			LATE_ELEMENTS_RIGHT_DROPPED_RATE_METRIC_NAME,
+			new MeterView(numRightLateRecordsDropped, 60));
 	}
 
 	@Override
@@ -224,6 +248,8 @@ abstract class TimeBoundedStreamJoin extends KeyedCoProcessFunction<RowData, Row
 		} else if (!emitted && joinType.isLeftOuter()) {
 			// Emit a null padding result if the left row is not cached and successfully joined.
 			joinCollector.collect(paddingUtil.padLeft(leftRow));
+		} else if (!emitted) {
+			lateLeftRecordsDroppedRate.markEvent();
 		}
 	}
 
@@ -301,6 +327,8 @@ abstract class TimeBoundedStreamJoin extends KeyedCoProcessFunction<RowData, Row
 		} else if (!emitted && joinType.isRightOuter()) {
 			// Emit a null padding result if the right row is not cached and successfully joined.
 			joinCollector.collect(paddingUtil.padRight(rightRow));
+		} else if (!emitted) {
+			lateRightRecordsDroppedRate.markEvent();
 		}
 	}
 
