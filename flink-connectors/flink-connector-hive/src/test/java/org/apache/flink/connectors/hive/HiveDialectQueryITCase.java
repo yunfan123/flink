@@ -988,6 +988,25 @@ public class HiveDialectQueryITCase {
         }
     }
 
+    @Test
+    public void testOrderByNonSelectField() throws Exception {
+        tableEnv.executeSql("create table book_store (name string, id int)");
+        tableEnv.executeSql(
+                        "insert into book_store values ('1', 1), ('2', 2), ('3', 3)")
+                .await();
+        try {
+            List<Row> results =
+                    CollectionUtil.iteratorToList(
+                            tableEnv.executeSql(
+                                            "select name"
+                                                    + " from book_store order by id desc")
+                                    .collect());
+            assertThat(results.toString()).isEqualTo("[+I[3, 3, 2, 2, 3, 2]]");
+        } finally {
+            tableEnv.executeSql("drop table book_store");
+        }
+    }
+
     private void runQFile(File qfile) throws Exception {
         QTest qTest = extractQTest(qfile);
         for (int i = 0; i < qTest.statements.size(); i++) {

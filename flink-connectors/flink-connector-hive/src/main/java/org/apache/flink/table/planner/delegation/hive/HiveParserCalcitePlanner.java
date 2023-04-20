@@ -2795,7 +2795,7 @@ public class HiveParserCalcitePlanner {
         res = selectRel == null ? res : selectRel;
 
         // 6. Build Rel for OB Clause
-        Pair<Sort, RelNode> obAndTopProj = genOBLogicalPlan(qb, res, outerMostQB);
+        Pair<Sort, RelNode> obAndTopProj = genOBLogicalPlan(qb, startSrcRel, outerMostQB);
         Sort orderRel = obAndTopProj.getKey();
         RelNode topConstrainingProjRel = obAndTopProj.getValue();
         res = orderRel == null ? res : orderRel;
