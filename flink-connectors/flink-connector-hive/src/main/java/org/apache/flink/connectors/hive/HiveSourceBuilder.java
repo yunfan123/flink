@@ -23,6 +23,7 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.connector.file.src.ContinuousEnumerationSettings;
 import org.apache.flink.connector.file.src.assigners.FileSplitAssigner;
+import org.apache.flink.connector.file.src.assigners.FixedFileSplitAssigner;
 import org.apache.flink.connector.file.src.assigners.SimpleSplitAssigner;
 import org.apache.flink.connector.file.src.reader.BulkFormat;
 import org.apache.flink.connector.file.table.ContinuousPartitionFetcher;
@@ -63,6 +64,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.apache.flink.connector.file.src.FileSource.DEFAULT_SPLIT_ASSIGNER;
+import static org.apache.flink.connector.file.table.FileSystemConnectorOptions.SOURCE_USE_FIXED_SPLIT_ASSIGNER;
 import static org.apache.flink.connectors.hive.HiveOptions.STREAMING_SOURCE_ENABLE;
 import static org.apache.flink.connectors.hive.HiveOptions.STREAMING_SOURCE_MONITOR_INTERVAL;
 import static org.apache.flink.connectors.hive.HiveOptions.STREAMING_SOURCE_PARTITION_INCLUDE;
@@ -229,9 +231,15 @@ public class HiveSourceBuilder {
         }
 
         FileSplitAssigner.Provider splitAssigner =
-                continuousSourceSettings == null || partitionKeys.isEmpty()
-                        ? DEFAULT_SPLIT_ASSIGNER
-                        : SimpleSplitAssigner::new;
+                !isStreamingSource() && configuration.getBoolean(SOURCE_USE_FIXED_SPLIT_ASSIGNER)
+                        ? FixedFileSplitAssigner::new
+                        : null;
+        if (splitAssigner == null) {
+            splitAssigner =
+                    continuousSourceSettings == null || partitionKeys.isEmpty()
+                            ? DEFAULT_SPLIT_ASSIGNER
+                            : SimpleSplitAssigner::new;
+        }
         List<byte[]> hiveTablePartitionBytes = Collections.emptyList();
         if (partitions != null) {
             // Serializing the HiveTablePartition list manually at compile time to avoid

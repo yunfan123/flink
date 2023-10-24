@@ -25,10 +25,13 @@ import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.api.java.typeutils.MapTypeInfo;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.connector.file.src.assigners.FileSplitAssigner;
+import org.apache.flink.connector.file.src.assigners.FixedFileSplitAssigner;
 import org.apache.flink.core.testutils.CommonTestUtils;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.transformations.SourceTransformation;
 import org.apache.flink.streaming.util.FiniteTestSource;
 import org.apache.flink.table.HiveVersionTestUtil;
 import org.apache.flink.table.api.EnvironmentSettings;
@@ -780,6 +783,44 @@ public class HiveTableSourceITCase extends BatchAbstractTestBase {
         }
 
         result.getJobClient().get().cancel();
+    }
+
+    @Test
+    public void testUseFixedFileSplitAssigner() throws Exception {
+        final String dbName = "source_db";
+        final String tblName = "test_use_FixedFileSplitAssigner";
+        TableEnvironment tEnv = createTableEnv();
+        tEnv.executeSql(
+                "CREATE TABLE source_db.test_use_FixedFileSplitAssigner "
+                        + "(`year` STRING, `value` INT) partitioned by (pt int)"
+                        + "TBLPROPERTIES ('source.use-fixed-split-assigner' = 'true')");
+        HiveTestUtils.createTextTableInserter(hiveCatalog, dbName, tblName)
+                .addRow(new Object[] {"2014", 3})
+                .commit("pt=0");
+        HiveTestUtils.createTextTableInserter(hiveCatalog, dbName, tblName)
+                .addRow(new Object[] {"2015", 2})
+                .commit("pt=1");
+        Table table =
+                tEnv.sqlQuery(
+                        "select year, `value` from "
+                                + "hive.source_db.test_use_FixedFileSplitAssigner "
+                                + "where pt = 0 or pt = 1");
+        PlannerBase planner = (PlannerBase) ((TableEnvironmentImpl) tEnv).getPlanner();
+        RelNode relNode = planner.optimize(TableTestUtil.toRelNode(table));
+        ExecNode<?> execNode =
+                planner.translateToExecNodeGraph(toScala(Collections.singletonList(relNode)), false)
+                        .getRootNodes()
+                        .get(0);
+        Transformation<?> transformation = execNode.translateToPlan(planner);
+        FileSplitAssigner fileSplitAssigner =
+                ((HiveSource) ((SourceTransformation) transformation).getSource())
+                        .getAssignerFactory()
+                        .create(new ArrayList<>());
+        assertThat(fileSplitAssigner).isInstanceOf(FixedFileSplitAssigner.class);
+        List<Row> rows = CollectionUtil.iteratorToList(table.execute().collect());
+        assertThat(rows).hasSize(2);
+        Object[] rowStrings = rows.stream().map(Row::toString).sorted().toArray();
+        assertThat(rowStrings).isEqualTo(new String[] {"+I[2014, 3]", "+I[2015, 2]"});
     }
 
     private static List<String> fetchRows(Iterator<Row> iter, int size) {
