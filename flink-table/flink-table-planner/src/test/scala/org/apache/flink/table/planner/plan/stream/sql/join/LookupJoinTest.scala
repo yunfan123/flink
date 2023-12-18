@@ -112,9 +112,78 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
                     |  'connector' = 'values',
                     |  'sink-insert-only' = 'false'
                     |)""".stripMargin)
+    util.addTable(
+      """
+        |CREATE TABLE ComplexLookupTable (
+        |  `strArray` ARRAY<VARCHAR>,
+        |  `intArray` ARRAY<INT>
+        |) WITH (
+        |  'connector' = 'values'
+        |)
+        |""".stripMargin)
+    util.addTable(
+      """
+        |CREATE TABLE BooleanKeySupportedLookupTable (
+        |  `id`           INT,
+        |  `bool_eq`      BOOLEAN,
+        |  `bool_not_eq`  BOOLEAN,
+        |  `bool_is_not1` BOOLEAN,
+        |  `bool_is_not2` BOOLEAN,
+        |  `bool_cast`    BOOLEAN
+        |) WITH (
+        |  'connector' = 'values'
+        |)
+        |""".stripMargin
+    )
     // for json plan test
     util.tableEnv.getConfig
       .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, Int.box(4))
+  }
+
+  @TestTemplate
+  def testJoinTemporalTableWithBooleanConstantConditionSupported(): Unit = {
+    val sql =
+      """
+        |SELECT * FROM MyTable AS T
+        |JOIN BooleanKeySupportedLookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
+        | ON D.id           =  T.a
+        |AND D.bool_eq      =  TRUE
+        |AND D.bool_not_eq  <> TRUE
+        |AND D.bool_is_not1 IS NOT TRUE
+        |AND D.bool_is_not2 IS NOT FALSE
+        |AND D.bool_cast    = cast('false' as BOOLEAN)
+      """.stripMargin
+
+    util.verifyPlan(sql)
+  }
+
+  @TestTemplate
+  def testJoinTemporalTableWithArrayConstantCondition(): Unit = {
+    val sql =
+      """
+        |SELECT * FROM MyTable AS T
+        |JOIN ComplexLookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
+        |ON D.intArray = Array[1] and Array['test'] = D.strArray
+      """.stripMargin
+
+    util.verifyPlan(sql)
+  }
+
+  @TestTemplate
+  def testJoinTemporalTableWithBooleanConstantConditionUnsupported(): Unit = {
+    val sql =
+      """
+        |SELECT * FROM MyTable AS T
+        |JOIN BooleanKeyUnsupportedLookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
+        | ON D.id           =  T.a
+        |AND D.bool_eq      =  TRUE
+        |AND D.bool_not_eq  <> TRUE
+        |AND D.bool_is_not1 IS NOT TRUE
+        |AND D.bool_is_not2 IS NOT FALSE
+        |AND D.bool_cast    = cast('false' as BOOLEAN)
+      """.stripMargin
+
+    util.verifyPlan(sql)
   }
 
   @TestTemplate
