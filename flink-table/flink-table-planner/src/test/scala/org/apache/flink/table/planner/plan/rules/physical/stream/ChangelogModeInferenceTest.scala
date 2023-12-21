@@ -20,10 +20,10 @@ package org.apache.flink.table.planner.plan.rules.physical.stream
 import org.apache.flink.api.common.time.Time
 import org.apache.flink.table.api.ExplainDetail
 import org.apache.flink.table.api.config.OptimizerConfigOptions
+import org.apache.flink.table.planner.plan.`trait`.UpdateKind
 import org.apache.flink.table.planner.plan.optimize.RelNodeBlockPlanBuilder
 import org.apache.flink.table.planner.plan.optimize.program.FlinkChangelogModeInferenceProgram
 import org.apache.flink.table.planner.utils.{AggregatePhaseStrategy, TableTestBase}
-
 import org.junit.jupiter.api.{BeforeEach, Test}
 
 /** Tests for [[FlinkChangelogModeInferenceProgram]]. */
@@ -318,6 +318,56 @@ class ChangelogModeInferenceTest extends TableTestBase {
   @Test
   def testKeepChangelogNormalizedOnNonUpsertJoin(): Unit = {
     upsertManagedTableWithChangelogNormalizeTestOnJoin(isUpsert = false)
+  }
+
+  @Test
+  def testJoinOnUniqueDoNotNeedUB(): Unit = {
+    val sql =
+      """
+        |SELECT *
+        |FROM (
+        |  SELECT word, count(*) as cnt
+        |  FROM MyTable
+        |  GROUP BY word
+        |) T1
+        |LEFT JOIN (
+        |  SELECT word, sum(number) as total
+        |  FROM MyTable
+        |  GROUP BY word
+        |) T2
+        |ON T1.word = T2.word
+        |""".stripMargin
+
+    util.verifyPlan(sql, ExplainDetail.CHANGELOG_MODE)
+  }
+
+  @Test
+  def testJoinOnUniqueAndInputContainsDelete() : Unit = {
+    val sql =
+      """
+        |SELECT *
+        |FROM (
+        |  SELECT cnt, count(*) as cnt1
+        |  FROM (
+        |    SELECT word, count(*) as cnt
+        |    FROM MyTable
+        |    GROUP BY word
+        |  )
+        |  GROUP BY cnt -- cnt is unique, but contains delete modify kind.
+        |) T1
+        |LEFT JOIN (
+        |  SELECT cnt, count(*) as cnt1
+        |  FROM (
+        |     SELECT word, count(*) as cnt
+        |     FROM MyTable
+        |     GROUP BY word
+        |  )
+        |  GROUP BY cnt -- cnt is unique, but contains delete modify kind.
+        |) T2
+        |ON T1.cnt = T2.cnt
+        |""".stripMargin
+
+    util.verifyPlan(sql, ExplainDetail.CHANGELOG_MODE)
   }
 
   private def upsertManagedTableWithChangelogNormalizeTestOnSink(isUpsert: Boolean): Unit = {
