@@ -123,7 +123,7 @@ class WindowAggregateJsonITCase extends JsonPlanTestBase {
                                 + "  name,\n"
                                 + "  COUNT(*)\n"
                                 + "FROM TABLE(\n"
-                                + "   HOP(TABLE MyTable, DESCRIPTOR(rowtime), INTERVAL '5' SECOND, INTERVAL '10' SECOND))\n"
+                                + "   HOP(TABLE MyTable, DESCRIPTOR(rowtime), INTERVAL '1' SECOND, INTERVAL '2' minute))\n"
                                 + "GROUP BY name, window_start, window_end")
                 .await();
 

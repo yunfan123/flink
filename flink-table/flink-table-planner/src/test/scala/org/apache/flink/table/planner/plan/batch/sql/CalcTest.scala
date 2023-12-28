@@ -207,4 +207,10 @@ class CalcTest extends TableTestBase {
     val sqlQuery = "SELECT a FROM (SELECT a, b FROM MyTable) t WHERE random_udf(b) > 10"
     util.verifyRelPlan(sqlQuery)
   }
+
+  @Test
+  def testUnixTimestamp(): Unit = {
+    val sqlQuery = "select unix_timestamp(), a from MyTable where a > unix_timestamp()"
+    util.verifyPlan(sqlQuery)
+  }
 }

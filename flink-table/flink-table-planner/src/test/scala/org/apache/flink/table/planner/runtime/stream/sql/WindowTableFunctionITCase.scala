@@ -223,7 +223,7 @@ class WindowTableFunctionITCase(mode: StateBackendMode) extends StreamingWithSta
       """
         |SELECT
         |  TO_TIMESTAMP(`ts`),
-        |  `int`,
+        |  sum(`int`),
         |  `double`,
         |  `float`,
         |  `bigdec`,
