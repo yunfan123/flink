@@ -87,7 +87,7 @@ class WindowTableFunctionJsonITCase extends JsonPlanTestBase {
                                 + "  window_start, \n"
                                 + "  window_end, \n"
                                 + "  window_time \n"
-                                + "FROM TABLE(TUMBLE(TABLE MyTable, DESCRIPTOR(rowtime), INTERVAL '5' SECOND))")
+                                + "FROM TABLE(TUMBLE(TABLE MyTable, DESCRIPTOR(rowtime), INTERVAL '5' SECOND, interval '1' second))")
                 .await();
 
         List<String> result = TestValuesTableFactory.getResultsAsStrings("MySink");

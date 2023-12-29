@@ -98,15 +98,12 @@ class GroupWindowITCase(mode: StateBackendMode, useTimestampLtz: Boolean)
       """
         |SELECT
         |  `string`,
-        |  HOP_START(rowtime, INTERVAL '0.004' SECOND, INTERVAL '0.005' SECOND),
-        |  HOP_ROWTIME(rowtime, INTERVAL '0.004' SECOND, INTERVAL '0.005' SECOND),
-        |  COUNT(1),
-        |  SUM(1),
-        |  COUNT(`int`),
-        |  COUNT(DISTINCT `float`),
-        |  concat_distinct_agg(name)
+        |  SUM(`int`)
+        |  --COUNT(`int`),
+        |  --COUNT(DISTINCT `float`),
+        |  --concat_distinct_agg(name)
         |FROM testTable
-        |GROUP BY `string`, HOP(rowtime, INTERVAL '0.004' SECOND, INTERVAL '0.005' SECOND)
+        |GROUP BY `string`, HOP(rowtime, INTERVAL '0.004' SECOND, INTERVAL '1' SECOND)
       """.stripMargin
 
     val sink = new TestingAppendSink

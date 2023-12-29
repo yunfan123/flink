@@ -66,6 +66,33 @@ class WindowRankITCase(mode: StateBackendMode) extends StreamingWithStateTestBas
   }
 
   @Test
+  def testMisc(): Unit = {
+    val sql =
+      """
+        |  SELECT *
+        |  FROM TABLE(
+        |      distribute(TABLE T1 partition by name, 4))
+      """.stripMargin
+
+    val sink = new TestingAppendSink
+    tEnv.sqlQuery(sql).toAppendStream[Row].addSink(sink)
+    env.execute()
+
+    val expected =
+      Seq(
+        "5,null,a,2020-10-10T00:00,2020-10-10T00:00:05,2020-10-10T00:00:04.999",
+        "2,Comment#1,a,2020-10-10T00:00,2020-10-10T00:00:05,2020-10-10T00:00:04.999",
+        "3,Comment#2,a,2020-10-10T00:00:05,2020-10-10T00:00:10,2020-10-10T00:00:09.999",
+        "6,Hi,b,2020-10-10T00:00:05,2020-10-10T00:00:10,2020-10-10T00:00:09.999",
+        "3,Hello,b,2020-10-10T00:00:05,2020-10-10T00:00:10,2020-10-10T00:00:09.999",
+        "4,Hi,b,2020-10-10T00:00:15,2020-10-10T00:00:20,2020-10-10T00:00:19.999",
+        "7,null,null,2020-10-10T00:00:30,2020-10-10T00:00:35,2020-10-10T00:00:34.999",
+        "1,Comment#3,b,2020-10-10T00:00:30,2020-10-10T00:00:35,2020-10-10T00:00:34.999"
+      )
+    assertEquals(expected.sorted.mkString("\n"), sink.getAppendResults.sorted.mkString("\n"))
+  }
+
+  @Test
   def testTumbleWindow(): Unit = {
     val sql =
       """
@@ -360,7 +387,7 @@ class WindowRankITCase(mode: StateBackendMode) extends StreamingWithStateTestBas
         |    ROW_NUMBER() OVER(
         |      PARTITION BY window_start, window_end, `name` ORDER BY `int` DESC) as rownum
         |  FROM TABLE(
-        |      TUMBLE(TABLE T1, DESCRIPTOR(rowtime), INTERVAL '5' SECOND))
+        |      distribute(TABLE T1 partition by name, DESCRIPTOR(rowtime), INTERVAL '5' SECOND))
         |)
         |WHERE rownum <= 2
       """.stripMargin

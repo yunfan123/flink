@@ -201,4 +201,10 @@ class CalcTest extends TableTestBase {
     val sqlQuery = "SELECT a FROM (SELECT a, b FROM MyTable) t WHERE random_udf(b) > 10"
     util.verifyRelPlan(sqlQuery)
   }
+
+  @Test
+  def testCastInCoalesce(): Unit = {
+    util.addTableSource[(String, Int, Timestamp)]("MyTable6", 'a, 'b, 'c)
+    util.verifyPlan("SELECT COALESCE(CAST(c AS INT), 0) FROM MyTable6")
+  }
 }

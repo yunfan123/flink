@@ -33,6 +33,7 @@ import static org.apache.flink.table.runtime.util.StreamRecordUtils.deleteRecord
 import static org.apache.flink.table.runtime.util.StreamRecordUtils.insertRecord;
 import static org.apache.flink.table.runtime.util.StreamRecordUtils.rowOfKind;
 import static org.apache.flink.table.runtime.util.StreamRecordUtils.updateAfterRecord;
+import static org.apache.flink.table.runtime.util.StreamRecordUtils.updateBeforeRecord;
 
 /** Harness tests for {@link StreamingJoinOperator}. */
 public class StreamingJoinOperatorTest extends StreamingJoinOperatorTestBase {
@@ -65,6 +66,47 @@ public class StreamingJoinOperatorTest extends StreamingJoinOperatorTestBase {
                                 leftTypeInfo.toRowType().getFieldNames().stream(),
                                 rightTypeInfo.toRowType().getFieldNames().stream())
                         .toArray(String[]::new));
+    }
+
+
+    @Test
+    public void testLeftOuterJoinDelete() throws Exception {
+//        insertRecord("Ord#1", "LineOrd#1", "3 Bellevue Drive, Pottstown, PA 19464")
+//        insertRecord("LineOrd#2", "AIR")
+        testHarness.processElement2(insertRecord("order1", "right1"));
+        assertor.shouldEmitNothing(testHarness);
+        testHarness.processElement1(insertRecord("left1", "order1", "1"));
+        assertor.shouldEmit(testHarness,
+                rowOfKind(
+                        RowKind.INSERT,
+                        "left1",
+                        "order1",
+                        "1",
+                        "order1",
+                        "right1"));
+        testHarness.processElement2(updateBeforeRecord("order1", "right1"));
+        testHarness.processElement2(updateAfterRecord("order1", "right2"));
+//        assertor.shouldEmit(testHarness,
+//                rowOfKind(
+//                        RowKind.INSERT,
+//                        "left1",
+//                        "order1",
+//                        "1",
+//                        "order1",
+//                        "right2"));
+        testHarness.processElement2(updateBeforeRecord("order1", "right2"));
+        testHarness.processElement2(updateAfterRecord("order1", "right3"));
+        assertor.shouldEmit(testHarness,
+                rowOfKind(
+                        RowKind.INSERT,
+                        "left1",
+                        "order1",
+                        "1",
+                        "order1",
+                        "right3"));
+        testHarness.processElement2(deleteRecord("order1", "right3"));
+        assertor.shouldEmit(testHarness,
+                rowOfKind(RowKind.DELETE, "left1", "order1", "1", "order1", "right3"));
     }
 
     /**

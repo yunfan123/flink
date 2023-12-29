@@ -64,6 +64,11 @@ class IntervalJoinTest extends TableTestBase {
                               |  'bounded' = 'false'
                               |)
        """.stripMargin)
+  util.tableEnv.executeSql(s"""
+                              |CREATE TABLE MyTable5 (
+                              |  d int
+                              |) like MyTable4
+       """.stripMargin)
 
   /** There should exist exactly two time conditions * */
   @Test
@@ -506,6 +511,26 @@ class IntervalJoinTest extends TableTestBase {
     """.stripMargin
     util.verifyExecPlan(sql)
   }
+
+  @Test
+  def testIntervalJoinWithET(): Unit = {
+    val query =
+      """
+        |SELECT t1.a, t2.b, t1.rowtime FROM MyTable t1 LEFT JOIN MyTable2 t2 ON
+        |     t1.rowtime = t2.rowtime
+        |""".stripMargin
+    util.verifyPlan(query)
+  }
+
+  @Test
+  def testIntervalJoinWithET1(): Unit = {
+    val query =
+      """
+        |create table sink()
+        |""".stripMargin
+    util.verifyPlan(query)
+  }
+
 
   private def verifyTimeBoundary(
       timeConditionSql: String,

@@ -1273,6 +1273,8 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
     public static final SqlFunction HOP = new SqlHopTableFunction();
     public static final SqlFunction CUMULATE = new SqlCumulateTableFunction();
 
+    public static final SqlFunction DISTRIBUTE = new SqlDistributeTableFunction();
+
     // Catalog Functions
     public static final SqlFunction CURRENT_DATABASE =
             BuiltInSqlFunction.newBuilder()

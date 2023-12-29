@@ -184,9 +184,37 @@ public class HiveDialectQueryITCase {
 
     @Test
     public void testCommonTest() throws Exception {
-        tableEnv.executeSql("select first_value(id, true) over (partition by name order by dep) from employee")
-                .collect().forEachRemaining(
-                r -> System.out.println(r.toString()));
+//        tableEnv.executeSql("select first_value(id, true) over (partition by name order by dep) from employee")
+//        tableEnv.executeSql("create table bar(I int, s string)");
+//        tableEnv.executeSql("create table baz(ai array<int>, d double)");
+//        tableEnv.executeSql(
+//                "create table employee(id int,name string,dep string,salary int,age int)");
+//        tableEnv.executeSql("select name, I, id from" +
+//                        "(select s, I from bar) left join" +
+//                        "(select name, id, dep from employee) on lower(s) == lower(name)")
+//        tableEnv.executeSql("select name, id from employee where dep = 20190108")
+        tableEnv.executeSql("create table bookstore_topic(topic_id int\n--, book_id_list array<int>\n)");
+        tableEnv.executeSql("insert into bookstore_topic select 1--, array(1,2)");
+        tableEnv.executeSql("select topic_id from bookstore_topic distribute by rand()");
+
+//        tableEnv.executeSql(
+//                        "SELECT named_struct('topic_id', topic_id) \n"
+//                                + "  from bookstore_topic\n")
+//                .collect().forEachRemaining(
+//                r -> System.out.println(r.toString()));
+    }
+
+    @Test
+    public void testMisc() throws Exception {
+        tableEnv.executeSql("CREATE TABLE test_date_sub_add_table(\n" +
+                "    `str_field` STRING,\n" +
+                "    `create_time` BIGINT\n" +
+                ")");
+        tableEnv.executeSql("insert into test_date_sub_add_table "
+                + "values('1', 1698686552), ('2', '1698600152'), ('3', '1698513752') ");
+        tableEnv.executeSql("select * from test_date_sub_add_table\n"
+                + "where create_time < unix_timestamp(date_add('2023-10-29',1))")
+                .collect().forEachRemaining(r -> System.out.println(r.toString()));
     }
 
     @Test

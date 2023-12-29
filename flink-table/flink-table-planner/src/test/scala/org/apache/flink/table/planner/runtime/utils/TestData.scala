@@ -727,18 +727,18 @@ object TestData {
   )
 
   val windowDataWithTimestamp: Seq[Row] = List(
-    row("2020-10-10 00:00:01", 1, 1d, 1f, new JBigDecimal("1.11"), "Hi", "a"),
-    row("2020-10-10 00:00:02", 2, 2d, 2f, new JBigDecimal("2.22"), "Comment#1", "a"),
-    row("2020-10-10 00:00:03", 2, 2d, 2f, new JBigDecimal("2.22"), "Comment#1", "a"),
-    row("2020-10-10 00:00:04", 5, 5d, 5f, new JBigDecimal("5.55"), null, "a"),
-    row("2020-10-10 00:00:07", 3, 3d, 3f, null, "Hello", "b"),
-    row("2020-10-10 00:00:06", 6, 6d, 6f, new JBigDecimal("6.66"), "Hi", "b"), // out of order
-    row("2020-10-10 00:00:08", 3, null, 3f, new JBigDecimal("3.33"), "Comment#2", "a"),
-    row("2020-10-10 00:00:04", 5, 5d, null, new JBigDecimal("5.55"), "Hi", "a"), // late event
+    row("2020-10-10 00:01:01", 1, 1d, 1f, new JBigDecimal("1.11"), "Hi", "a"),
+    row("2020-10-10 00:01:02", 2, 2d, 2f, new JBigDecimal("2.22"), "Comment#1", "a"),
+    row("2020-10-10 00:01:03", 2, 2d, 2f, new JBigDecimal("2.22"), "Comment#1", "a"),
+    row("2020-10-10 00:02:04", 5, 5d, 5f, new JBigDecimal("5.55"), null, "a"),
+    row("2020-10-10 00:03:07", 3, 3d, 3f, null, "Hello", "b"),
+    row("2020-10-10 00:03:06", 6, 6d, 6f, new JBigDecimal("6.66"), "Hi", "b"), // out of order
+    row("2020-10-10 00:04:08", 3, null, 3f, new JBigDecimal("3.33"), "Comment#2", "a"),
+    row("2020-10-10 00:05:04", 5, 5d, null, new JBigDecimal("5.55"), "Hi", "a"), // late event
 
-    row("2020-10-10 00:00:16", 4, 4d, 4f, new JBigDecimal("4.44"), "Hi", "b"),
-    row("2020-10-10 00:00:32", 7, 7d, 7f, new JBigDecimal("7.77"), null, null),
-    row("2020-10-10 00:00:34", 1, 3d, 3f, new JBigDecimal("3.33"), "Comment#3", "b")
+    row("2020-10-10 00:06:16", 4, 4d, 4f, new JBigDecimal("4.44"), "Hi", "b"),
+    row("2020-10-10 00:06:32", 7, 7d, 7f, new JBigDecimal("7.77"), null, null),
+    row("2020-10-10 00:06:34", 1, 3d, 3f, new JBigDecimal("3.33"), "Comment#3", "b")
   )
 
   val windowData2WithTimestamp: Seq[Row] = List(
