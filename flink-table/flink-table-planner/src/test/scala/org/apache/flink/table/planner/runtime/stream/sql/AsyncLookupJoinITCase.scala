@@ -49,8 +49,11 @@ class AsyncLookupJoinITCase(
     backend: StateBackendMode,
     objectReuse: Boolean,
     asyncOutputMode: AsyncOutputMode,
-    enableCache: Boolean)
+    enableCache: Boolean,
+    partitionedJoin: Boolean)
   extends StreamingWithStateTestBase(backend) {
+
+  private var partitionJoinHint: String = _
 
   val data = List(
     rowOf(1L, 12, "Julian"),
@@ -83,6 +86,12 @@ class AsyncLookupJoinITCase(
     createLookupTable("user_table_with_lookup_threshold2", userData, 2)
     // lookup will start from the 3rd time, first lookup will always get null result
     createLookupTable("user_table_with_lookup_threshold3", userData, 3)
+
+    if (partitionedJoin) {
+      partitionJoinHint = " /*+ PARTITIONED_JOIN */"
+    } else {
+      partitionJoinHint = ""
+    }
   }
 
   @AfterEach
@@ -173,11 +182,11 @@ class AsyncLookupJoinITCase(
   def testAsyncJoinTemporalTableOnMultiKeyFields(): Unit = {
     // test left table's join key define order diffs from right's
     val sql =
-      """
-        |SELECT t1.id, t1.len, D.name
-        |FROM (select content, id, len, proctime FROM src AS T) t1
-        |JOIN user_table for system_time as of t1.proctime AS D
-        |ON t1.content = D.name AND t1.id = D.id
+      s"""
+         |SELECT t1.id, t1.len, D.name
+         |FROM (select content, id, len, proctime FROM src AS T) t1
+         |JOIN user_table$partitionJoinHint for system_time as of t1.proctime AS D
+         |ON t1.content = D.name AND t1.id = D.id
       """.stripMargin
 
     val sink = new TestingAppendSink
@@ -190,8 +199,9 @@ class AsyncLookupJoinITCase(
 
   @TestTemplate
   def testAsyncJoinTemporalTable(): Unit = {
-    val sql = "SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN user_table " +
-      "for system_time as of T.proctime AS D ON T.id = D.id"
+    val sql =
+      s"SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN user_table$partitionJoinHint " +
+        "for system_time as of T.proctime AS D ON T.id = D.id"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -203,8 +213,9 @@ class AsyncLookupJoinITCase(
 
   @TestTemplate
   def testAsyncJoinTemporalTableWithPushDown(): Unit = {
-    val sql = "SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN user_table " +
-      "for system_time as of T.proctime AS D ON T.id = D.id AND D.age > 20"
+    val sql =
+      s"SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN user_table$partitionJoinHint " +
+        "for system_time as of T.proctime AS D ON T.id = D.id AND D.age > 20"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -216,8 +227,9 @@ class AsyncLookupJoinITCase(
 
   @TestTemplate
   def testAsyncJoinTemporalTableWithNonEqualFilter(): Unit = {
-    val sql = "SELECT T.id, T.len, T.content, D.name, D.age FROM src AS T JOIN user_table " +
-      "for system_time as of T.proctime AS D ON T.id = D.id WHERE T.len <= D.age"
+    val sql =
+      s"SELECT T.id, T.len, T.content, D.name, D.age FROM src AS T JOIN user_table$partitionJoinHint " +
+        "for system_time as of T.proctime AS D ON T.id = D.id WHERE T.len <= D.age"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -229,10 +241,11 @@ class AsyncLookupJoinITCase(
 
   @TestTemplate
   def testAsyncLeftJoinTemporalTableWithLocalPredicate(): Unit = {
-    val sql = "SELECT T.id, T.len, T.content, D.name, D.age FROM src AS T LEFT JOIN user_table " +
-      "for system_time as of T.proctime AS D ON T.id = D.id " +
-      "AND T.len > 1 AND D.age > 20 AND D.name = 'Fabian' " +
-      "WHERE T.id > 1"
+    val sql =
+      s"SELECT T.id, T.len, T.content, D.name, D.age FROM src AS T LEFT JOIN user_table$partitionJoinHint " +
+        "for system_time as of T.proctime AS D ON T.id = D.id " +
+        "AND T.len > 1 AND D.age > 20 AND D.name = 'Fabian' " +
+        "WHERE T.id > 1"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -248,7 +261,7 @@ class AsyncLookupJoinITCase(
 
   @TestTemplate
   def testAsyncJoinTemporalTableOnMultiFields(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name FROM src AS T JOIN user_table$partitionJoinHint " +
       "for system_time as of T.proctime AS D ON T.id = D.id AND T.content = D.name"
 
     val sink = new TestingAppendSink
@@ -264,9 +277,10 @@ class AsyncLookupJoinITCase(
     tEnv.createTemporarySystemFunction("mod1", TestMod)
     tEnv.createTemporarySystemFunction("wrapper1", TestWrapperUdf)
 
-    val sql = "SELECT T.id, T.len, wrapper1(D.name) as name FROM src AS T JOIN user_table " +
-      "for system_time as of T.proctime AS D " +
-      "ON mod1(T.id, 4) = D.id AND T.content = D.name"
+    val sql =
+      s"SELECT T.id, T.len, wrapper1(D.name) as name FROM src AS T JOIN user_table$partitionJoinHint " +
+        "for system_time as of T.proctime AS D " +
+        "ON mod1(T.id, 4) = D.id AND T.content = D.name"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -280,9 +294,10 @@ class AsyncLookupJoinITCase(
   def testAsyncJoinTemporalTableWithUdfFilter(): Unit = {
     tEnv.createTemporarySystemFunction("add", new TestAddWithOpen)
 
-    val sql = "SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN user_table " +
-      "for system_time as of T.proctime AS D ON T.id = D.id " +
-      "WHERE add(T.id, D.id) > 3 AND add(T.id, 2) > 3 AND add (D.id, 2) > 3"
+    val sql =
+      s"SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN user_table$partitionJoinHint " +
+        "for system_time as of T.proctime AS D ON T.id = D.id " +
+        "WHERE add(T.id, D.id) > 3 AND add(T.id, 2) > 3 AND add (D.id, 2) > 3"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -300,7 +315,7 @@ class AsyncLookupJoinITCase(
     val table1 = tEnv.sqlQuery(sql1)
     tEnv.createTemporaryView("t1", table1)
 
-    val sql2 = "SELECT t1.id, D.name, D.age FROM t1 LEFT JOIN user_table " +
+    val sql2 = s"SELECT t1.id, D.name, D.age FROM t1 LEFT JOIN user_table$partitionJoinHint " +
       "for system_time as of t1.proctime AS D ON t1.id = D.id"
 
     val sink = new TestingRetractSink
@@ -324,7 +339,7 @@ class AsyncLookupJoinITCase(
     val table1 = tEnv.sqlQuery(sql1)
     tEnv.createTemporaryView("t1", table1)
 
-    val sql2 = "SELECT t1.id, D.name, D.age FROM t1 LEFT JOIN user_table " +
+    val sql2 = s"SELECT t1.id, D.name, D.age FROM t1 LEFT JOIN user_table$partitionJoinHint " +
       "for system_time as of t1.proctime AS D ON t1.id = D.id"
 
     val sink = new TestingRetractSink
@@ -344,8 +359,9 @@ class AsyncLookupJoinITCase(
 
   @TestTemplate
   def testAsyncLeftJoinTemporalTable(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name, D.age FROM src AS T LEFT JOIN user_table " +
-      "for system_time as of T.proctime AS D ON T.id = D.id"
+    val sql =
+      s"SELECT T.id, T.len, D.name, D.age FROM src AS T LEFT JOIN user_table$partitionJoinHint " +
+        "for system_time as of T.proctime AS D ON T.id = D.id"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -360,9 +376,10 @@ class AsyncLookupJoinITCase(
   def testExceptionThrownFromAsyncJoinTemporalTable(): Unit = {
     tEnv.createTemporarySystemFunction("errorFunc", TestExceptionThrown)
 
-    val sql = "SELECT T.id, T.len, D.name, D.age FROM src AS T LEFT JOIN user_table " +
-      "for system_time as of T.proctime AS D ON T.id = D.id " +
-      "where errorFunc(D.name) > cast(1000 as decimal(10,4))" // should exception here
+    val sql =
+      s"SELECT T.id, T.len, D.name, D.age FROM src AS T LEFT JOIN user_table$partitionJoinHint " +
+        "for system_time as of T.proctime AS D ON T.id = D.id " +
+        "where errorFunc(D.name) > cast(1000 as decimal(10,4))" // should exception here
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -394,11 +411,11 @@ class AsyncLookupJoinITCase(
            |""".stripMargin
       tEnv.executeSql(sourceDdl)
       val sql =
-        """
-          |SELECT T.id, D.name, D.age FROM T 
-          |LEFT JOIN user_table FOR SYSTEM_TIME AS OF T.proc AS D 
-          |ON T.id = D.id
-          |""".stripMargin
+        s"""
+           |SELECT T.id, D.name, D.age FROM T 
+           |LEFT JOIN user_table$partitionJoinHint FOR SYSTEM_TIME AS OF T.proc AS D 
+           |ON T.id = D.id
+           |""".stripMargin
       val sink = new TestingAppendSink
       tEnv.sqlQuery(sql).toDataStream.addSink(sink)
       env.execute()
@@ -444,7 +461,7 @@ class AsyncLookupJoinITCase(
     tEnv
       .sqlQuery(s"""
                    |SELECT $maxRetryTwiceHint T.id, T.len, T.content, D.name FROM src AS T
-                   |JOIN user_table for system_time as of T.proctime AS D
+                   |JOIN user_table$partitionJoinHint for system_time as of T.proctime AS D
                    |ON T.id = D.id
                    |""".stripMargin)
       .toDataStream
@@ -461,11 +478,12 @@ class AsyncLookupJoinITCase(
     val maxRetryOnceHint = getAsyncRetryLookupHint("D", 1)
     val sink = new TestingAppendSink
     tEnv
-      .sqlQuery(s"""
-                   |SELECT $maxRetryOnceHint T.id, T.len, T.content, D.name FROM src AS T
-                   |JOIN user_table_with_lookup_threshold3 for system_time as of T.proctime AS D
-                   |ON T.id = D.id
-                   |""".stripMargin)
+      .sqlQuery(
+        s"""
+           |SELECT $maxRetryOnceHint T.id, T.len, T.content, D.name FROM src AS T
+           |JOIN user_table_with_lookup_threshold3$partitionJoinHint for system_time as of T.proctime AS D
+           |ON T.id = D.id
+           |""".stripMargin)
       .toDataStream
       .addSink(sink)
     env.execute()
@@ -491,11 +509,12 @@ class AsyncLookupJoinITCase(
 
     val sink = new TestingAppendSink
     tEnv
-      .sqlQuery(s"""
-                   |SELECT $maxRetryTwiceHint T.id, T.len, T.content, D.name FROM src AS T
-                   |JOIN user_table_with_lookup_threshold2 for system_time as of T.proctime AS D
-                   |ON T.id = D.id
-                   |""".stripMargin)
+      .sqlQuery(
+        s"""
+           |SELECT $maxRetryTwiceHint T.id, T.len, T.content, D.name FROM src AS T
+           |JOIN user_table_with_lookup_threshold2$partitionJoinHint for system_time as of T.proctime AS D
+           |ON T.id = D.id
+           |""".stripMargin)
       .toDataStream
       .addSink(sink)
     env.execute()
@@ -514,9 +533,12 @@ object AsyncLookupJoinITCase {
   val DISABLE_OBJECT_REUSE: JBoolean = JBoolean.FALSE;
   val ENABLE_CACHE: JBoolean = JBoolean.TRUE;
   val DISABLE_CACHE: JBoolean = JBoolean.FALSE;
+  val NO_PARTITION_JOIN: JBoolean = JBoolean.FALSE;
+  val PARTITION_JOIN: JBoolean = JBoolean.TRUE;
 
-  @Parameters(name =
-    "LegacyTableSource={0}, StateBackend={1}, ObjectReuse={2}, AsyncOutputMode={3}, EnableCache={4}")
+  @Parameters(
+    name =
+      "LegacyTableSource={0}, StateBackend={1}, ObjectReuse={2}, AsyncOutputMode={3}, EnableCache={4}, partitionedJoin={5}")
   def parameters(): JCollection[Array[Object]] = {
     Seq[Array[AnyRef]](
       Array(
@@ -524,49 +546,113 @@ object AsyncLookupJoinITCase {
         HEAP_BACKEND,
         ENABLE_OBJECT_REUSE,
         AsyncOutputMode.ALLOW_UNORDERED,
-        DISABLE_CACHE),
+        DISABLE_CACHE,
+        NO_PARTITION_JOIN),
       Array(
         LEGACY_TABLE_SOURCE,
         ROCKSDB_BACKEND,
         DISABLE_OBJECT_REUSE,
         AsyncOutputMode.ORDERED,
-        DISABLE_CACHE),
+        DISABLE_CACHE,
+        NO_PARTITION_JOIN),
       Array(
         DYNAMIC_TABLE_SOURCE,
         HEAP_BACKEND,
         DISABLE_OBJECT_REUSE,
         AsyncOutputMode.ORDERED,
-        DISABLE_CACHE),
+        DISABLE_CACHE,
+        NO_PARTITION_JOIN),
       Array(
         DYNAMIC_TABLE_SOURCE,
         HEAP_BACKEND,
         ENABLE_OBJECT_REUSE,
         AsyncOutputMode.ORDERED,
-        DISABLE_CACHE),
+        DISABLE_CACHE,
+        NO_PARTITION_JOIN),
       Array(
         DYNAMIC_TABLE_SOURCE,
         ROCKSDB_BACKEND,
         DISABLE_OBJECT_REUSE,
         AsyncOutputMode.ALLOW_UNORDERED,
-        DISABLE_CACHE),
+        DISABLE_CACHE,
+        NO_PARTITION_JOIN),
       Array(
         DYNAMIC_TABLE_SOURCE,
         ROCKSDB_BACKEND,
         ENABLE_OBJECT_REUSE,
         AsyncOutputMode.ALLOW_UNORDERED,
-        DISABLE_CACHE),
+        DISABLE_CACHE,
+        NO_PARTITION_JOIN),
       Array(
         DYNAMIC_TABLE_SOURCE,
         HEAP_BACKEND,
         DISABLE_OBJECT_REUSE,
         AsyncOutputMode.ORDERED,
-        ENABLE_CACHE),
+        ENABLE_CACHE,
+        NO_PARTITION_JOIN),
       Array(
         DYNAMIC_TABLE_SOURCE,
         HEAP_BACKEND,
         ENABLE_OBJECT_REUSE,
         AsyncOutputMode.ALLOW_UNORDERED,
-        ENABLE_CACHE)
+        ENABLE_CACHE,
+        NO_PARTITION_JOIN),
+      Array(
+        LEGACY_TABLE_SOURCE,
+        HEAP_BACKEND,
+        ENABLE_OBJECT_REUSE,
+        AsyncOutputMode.ALLOW_UNORDERED,
+        DISABLE_CACHE,
+        PARTITION_JOIN),
+      Array(
+        LEGACY_TABLE_SOURCE,
+        ROCKSDB_BACKEND,
+        DISABLE_OBJECT_REUSE,
+        AsyncOutputMode.ORDERED,
+        DISABLE_CACHE,
+        PARTITION_JOIN),
+      Array(
+        DYNAMIC_TABLE_SOURCE,
+        HEAP_BACKEND,
+        DISABLE_OBJECT_REUSE,
+        AsyncOutputMode.ORDERED,
+        DISABLE_CACHE,
+        PARTITION_JOIN),
+      Array(
+        DYNAMIC_TABLE_SOURCE,
+        HEAP_BACKEND,
+        ENABLE_OBJECT_REUSE,
+        AsyncOutputMode.ORDERED,
+        DISABLE_CACHE,
+        PARTITION_JOIN),
+      Array(
+        DYNAMIC_TABLE_SOURCE,
+        ROCKSDB_BACKEND,
+        DISABLE_OBJECT_REUSE,
+        AsyncOutputMode.ALLOW_UNORDERED,
+        DISABLE_CACHE,
+        PARTITION_JOIN),
+      Array(
+        DYNAMIC_TABLE_SOURCE,
+        ROCKSDB_BACKEND,
+        ENABLE_OBJECT_REUSE,
+        AsyncOutputMode.ALLOW_UNORDERED,
+        DISABLE_CACHE,
+        PARTITION_JOIN),
+      Array(
+        DYNAMIC_TABLE_SOURCE,
+        HEAP_BACKEND,
+        DISABLE_OBJECT_REUSE,
+        AsyncOutputMode.ORDERED,
+        ENABLE_CACHE,
+        PARTITION_JOIN),
+      Array(
+        DYNAMIC_TABLE_SOURCE,
+        HEAP_BACKEND,
+        ENABLE_OBJECT_REUSE,
+        AsyncOutputMode.ALLOW_UNORDERED,
+        ENABLE_CACHE,
+        PARTITION_JOIN)
     )
   }
 }

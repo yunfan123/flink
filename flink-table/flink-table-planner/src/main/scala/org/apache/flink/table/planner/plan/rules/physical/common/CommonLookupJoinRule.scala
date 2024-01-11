@@ -25,15 +25,13 @@ import org.apache.flink.table.planner.plan.rules.common.CommonTemporalTableJoinR
 import org.apache.flink.table.planner.plan.schema.TimeIndicatorRelDataType
 import org.apache.flink.table.planner.plan.utils.JoinUtil
 import org.apache.flink.table.sources.LookupableTableSource
-
-import org.apache.calcite.plan.{RelOptRule, RelOptRuleCall, RelOptTable}
+import org.apache.calcite.plan.{RelOptRule, RelOptRuleCall, RelOptTable, RelTraitSet}
 import org.apache.calcite.plan.RelOptRule.{any, operand}
 import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.core.TableScan
 import org.apache.calcite.rex.RexProgram
 
 import java.util
-
 import scala.collection.JavaConversions._
 
 /**
@@ -113,6 +111,7 @@ trait CommonLookupJoinRule extends CommonTemporalTableJoinRule {
       input: FlinkLogicalRel,
       temporalTable: RelOptTable,
       calcProgram: Option[RexProgram]): CommonPhysicalLookupJoin
+
 }
 
 abstract class BaseSnapshotOnTableScanRule(description: String)
@@ -140,7 +139,6 @@ abstract class BaseSnapshotOnTableScanRule(description: String)
     val temporalJoin = transform(join, input, tableScan.getTable, None)
     call.transformTo(temporalJoin)
   }
-
 }
 
 abstract class BaseSnapshotOnCalcTableScanRule(description: String)
