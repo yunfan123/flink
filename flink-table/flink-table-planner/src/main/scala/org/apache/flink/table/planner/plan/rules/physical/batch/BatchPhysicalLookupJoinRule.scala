@@ -17,6 +17,7 @@
  */
 package org.apache.flink.table.planner.plan.rules.physical.batch
 
+import org.apache.flink.table.planner.plan.`trait`.FlinkRelDistribution
 import org.apache.flink.table.planner.plan.nodes.FlinkConventions
 import org.apache.flink.table.planner.plan.nodes.logical._
 import org.apache.flink.table.planner.plan.nodes.physical.batch.BatchPhysicalLookupJoin
@@ -46,8 +47,9 @@ object BatchPhysicalLookupJoinRule {
         join: FlinkLogicalJoin,
         input: FlinkLogicalRel,
         temporalTable: RelOptTable,
+        enablePartitionedJoin: Boolean,
         calcProgram: Option[RexProgram]): CommonPhysicalLookupJoin = {
-      doTransform(join, input, temporalTable, calcProgram)
+      doTransform(join, input, temporalTable, enablePartitionedJoin, calcProgram)
     }
   }
 
@@ -58,8 +60,9 @@ object BatchPhysicalLookupJoinRule {
         join: FlinkLogicalJoin,
         input: FlinkLogicalRel,
         temporalTable: RelOptTable,
+        enablePartitionedJoin: Boolean,
         calcProgram: Option[RexProgram]): CommonPhysicalLookupJoin = {
-      doTransform(join, input, temporalTable, calcProgram)
+      doTransform(join, input, temporalTable, enablePartitionedJoin, calcProgram)
     }
 
   }
@@ -68,12 +71,17 @@ object BatchPhysicalLookupJoinRule {
       join: FlinkLogicalJoin,
       input: FlinkLogicalRel,
       temporalTable: RelOptTable,
+      enablePartitionedJoin: Boolean,
       calcProgram: Option[RexProgram]): BatchPhysicalLookupJoin = {
     val joinInfo = join.analyzeCondition
     val cluster = join.getCluster
 
     val providedTrait = join.getTraitSet.replace(FlinkConventions.BATCH_PHYSICAL)
-    val requiredTrait = input.getTraitSet.replace(FlinkConventions.BATCH_PHYSICAL)
+    var requiredTrait = input.getTraitSet.replace(FlinkConventions.BATCH_PHYSICAL)
+    // if partitioning enabled, use the join key as partition key
+    if (enablePartitionedJoin && !joinInfo.pairs().isEmpty) {
+      requiredTrait = requiredTrait.plus(FlinkRelDistribution.hash(joinInfo.leftKeys))
+    }
     val convInput = RelOptRule.convert(input, requiredTrait)
     new BatchPhysicalLookupJoin(
       cluster,

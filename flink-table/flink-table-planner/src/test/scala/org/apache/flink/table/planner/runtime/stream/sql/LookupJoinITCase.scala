@@ -45,8 +45,17 @@ import java.util.{Collection => JCollection}
 import scala.collection.JavaConversions._
 
 @ExtendWith(Array(classOf[ParameterizedTestExtension]))
-class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
+class LookupJoinITCase(
+    legacyTableSource: Boolean,
+    cacheType: LookupCacheType,
+    partitionedJoin: Boolean)
   extends StreamingTestBase {
+
+  private var userTableSubClause: String = _
+  private var userTableWithNullSubClause: String = _
+  private var userTableWithComputedColumnSubClause: String = _
+  private var userTableThreshold2: String = _
+  private var userTableThreshold3: String = _
 
   val data = List(
     rowOf(1L, 12, "Julian"),
@@ -92,6 +101,19 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
     // lookup will start from the 3rd time, first lookup will always get null result
     createLookupTable("user_table_with_lookup_threshold3", userData, 3)
     createLookupTableWithComputedColumn("userTableWithComputedColumn", userData)
+    if (partitionedJoin) {
+      userTableSubClause = "user_table /*+ PARTITIONED_JOIN */"
+      userTableWithNullSubClause = "nullable_user_table /*+ PARTITIONED_JOIN */"
+      userTableWithComputedColumnSubClause = "userTableWithComputedColumn /*+ PARTITIONED_JOIN */"
+      userTableThreshold2 = "user_table_with_lookup_threshold2 /*+ PARTITIONED_JOIN */"
+      userTableThreshold3 = "user_table_with_lookup_threshold3 /*+ PARTITIONED_JOIN */"
+    } else {
+      userTableSubClause = "user_table"
+      userTableWithNullSubClause = "nullable_user_table"
+      userTableWithComputedColumnSubClause = "userTableWithComputedColumn"
+      userTableThreshold2 = "user_table_with_lookup_threshold2"
+      userTableThreshold3 = "user_table_with_lookup_threshold3"
+    }
   }
 
   @AfterEach
@@ -204,7 +226,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTable(): Unit = {
-    val sql = "SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.id = D.id"
 
     val sink = new TestingAppendSink
@@ -219,7 +241,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
   def testJoinTemporalTableWithUdfFilter(): Unit = {
     tEnv.createTemporarySystemFunction("add", new TestAddWithOpen)
 
-    val sql = "SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.id = D.id " +
       "WHERE add(T.id, D.id) > 3 AND add(T.id, 2) > 3 AND add (D.id, 2) > 3"
 
@@ -235,14 +257,14 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
   @TestTemplate
   def testJoinTemporalTableWithUdfEqualFilter(): Unit = {
     val sql =
-      """
-        |SELECT
-        |  T.id, T.len, T.content, D.name
-        |FROM
-        |  src AS T JOIN user_table for system_time as of T.proctime AS D
-        |ON T.id = D.id
-        |WHERE CONCAT('Hello-', D.name) = 'Hello-Jark'
-        |""".stripMargin
+      s"""
+         |SELECT
+         |  T.id, T.len, T.content, D.name
+         |FROM
+         |  src AS T JOIN $userTableSubClause for system_time as of T.proctime AS D
+         |ON T.id = D.id
+         |WHERE CONCAT('Hello-', D.name) = 'Hello-Jark'
+         |""".stripMargin
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -254,7 +276,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnConstantKey(): Unit = {
-    val sql = "SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON D.id = 1"
 
     val sink = new TestingAppendSink
@@ -272,7 +294,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnNullableKey(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name FROM nullable_src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name FROM nullable_src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.id = D.id"
 
     val sink = new TestingAppendSink
@@ -285,7 +307,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableWithPushDown(): Unit = {
-    val sql = "SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, T.content, D.name FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.id = D.id AND D.age > 20"
 
     val sink = new TestingAppendSink
@@ -298,8 +320,9 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableWithNonEqualFilter(): Unit = {
-    val sql = "SELECT T.id, T.len, T.content, D.name, D.age FROM src AS T JOIN user_table " +
-      "for system_time as of T.proctime AS D ON T.id = D.id WHERE T.len <= D.age"
+    val sql =
+      s"SELECT T.id, T.len, T.content, D.name, D.age FROM src AS T JOIN $userTableSubClause " +
+        "for system_time as of T.proctime AS D ON T.id = D.id WHERE T.len <= D.age"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -311,7 +334,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnMultiFields(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.id = D.id AND T.content = D.name"
 
     val sink = new TestingAppendSink
@@ -324,7 +347,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnMultiKeyFields(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.content = D.name AND T.id = D.id"
 
     val sink = new TestingAppendSink
@@ -340,7 +363,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
     // test left table's join key define order diffs from right's
     val sql = "SELECT t1.id, t1.len, D.name FROM " +
       "(select proctime, content, id, len FROM src) t1 " +
-      "JOIN user_table for system_time as of t1.proctime AS D " +
+      s"JOIN $userTableSubClause for system_time as of t1.proctime AS D " +
       "ON t1.content = D.name AND t1.id = D.id"
 
     val sink = new TestingAppendSink
@@ -353,7 +376,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnMultiKeyFieldsWithConstantKey(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.content = D.name AND 3 = D.id"
 
     val sink = new TestingAppendSink
@@ -366,7 +389,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnMultiKeyFieldsWithStringConstantKey(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON D.name = 'Fabian' AND T.id = D.id"
 
     val sink = new TestingAppendSink
@@ -379,7 +402,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnMultiConstantKey(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON D.name = 'Fabian' AND 3 = D.id"
 
     val sink = new TestingAppendSink
@@ -398,7 +421,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testLeftJoinTemporalTable(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name, D.age FROM src AS T LEFT JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name, D.age FROM src AS T LEFT JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.id = D.id"
 
     val sink = new TestingAppendSink
@@ -412,7 +435,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testLeftJoinTemporalTableWithPreFilter(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name, D.age FROM src AS T LEFT JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name, D.age FROM src AS T LEFT JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.id = D.id AND T.len < 15"
 
     val sink = new TestingAppendSink
@@ -431,8 +454,9 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
     // tEnv.createTemporaryFunction("add", classOf[TestAddWithOpen])
 
     // 'add(T.id, 2) > 4' is equal to 'T.id > 2', here we are testing a udf
-    val sql = "SELECT T.id, T.len, T.content, D.name FROM src AS T LEFT JOIN user_table " +
-      "for system_time as of T.proctime AS D ON T.id = D.id AND add(T.id, 2) > 4"
+    val sql =
+      s"SELECT T.id, T.len, T.content, D.name FROM src AS T LEFT JOIN $userTableSubClause " +
+        "for system_time as of T.proctime AS D ON T.id = D.id AND add(T.id, 2) > 4"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -450,8 +474,9 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testLeftJoinTemporalTableOnNullableKey(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name FROM nullable_src AS T LEFT OUTER JOIN user_table " +
-      "for system_time as of T.proctime AS D ON T.id = D.id"
+    val sql =
+      s"SELECT T.id, T.len, D.name FROM nullable_src AS T LEFT OUTER JOIN $userTableSubClause " +
+        "for system_time as of T.proctime AS D ON T.id = D.id"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -463,7 +488,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testLeftJoinTemporalTableOnMultKeyFields(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name, D.age FROM src AS T LEFT JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name, D.age FROM src AS T LEFT JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.id = D.id and T.content = D.name"
 
     val sink = new TestingAppendSink
@@ -477,8 +502,9 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnMultiKeyFieldsWithNullData(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name FROM nullable_src AS T JOIN nullable_user_table " +
-      "for system_time as of T.proctime AS D ON T.content = D.name AND T.id = D.id"
+    val sql =
+      s"SELECT T.id, T.len, D.name FROM nullable_src AS T JOIN $userTableWithNullSubClause " +
+        "for system_time as of T.proctime AS D ON T.content = D.name AND T.id = D.id"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -490,8 +516,9 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testLeftJoinTemporalTableOnMultiKeyFieldsWithNullData(): Unit = {
-    val sql = "SELECT D.id, T.len, D.name FROM nullable_src AS T LEFT JOIN nullable_user_table " +
-      "for system_time as of T.proctime AS D ON T.content = D.name AND T.id = D.id"
+    val sql =
+      s"SELECT D.id, T.len, D.name FROM nullable_src AS T LEFT JOIN $userTableWithNullSubClause " +
+        "for system_time as of T.proctime AS D ON T.content = D.name AND T.id = D.id"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -503,8 +530,9 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnNullConstantKey(): Unit = {
-    val sql = "SELECT T.id, T.len, T.content FROM nullable_src AS T JOIN nullable_user_table " +
-      "for system_time as of T.proctime AS D ON D.id = null"
+    val sql =
+      s"SELECT T.id, T.len, T.content FROM nullable_src AS T JOIN $userTableWithNullSubClause " +
+        "for system_time as of T.proctime AS D ON D.id = null"
 
     val sink = new TestingAppendSink
     tEnv.sqlQuery(sql).toDataStream.addSink(sink)
@@ -515,7 +543,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnMultiKeyFieldsWithNullConstantKey(): Unit = {
-    val sql = "SELECT T.id, T.len, D.name FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.len, D.name FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D ON T.content = D.name AND null = D.id"
 
     val sink = new TestingAppendSink
@@ -527,7 +555,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
 
   @TestTemplate
   def testJoinTemporalTableOnMultiKeyFieldsWithUDF(): Unit = {
-    val sql = "SELECT T.id, T.content, D.age, D.id FROM src AS T JOIN user_table " +
+    val sql = s"SELECT T.id, T.content, D.age, D.id FROM src AS T JOIN $userTableSubClause " +
       "for system_time as of T.proctime AS D " +
       "ON T.id = D.id + 4 AND T.content = concat(D.name, '!') AND D.age = 11"
 
@@ -546,7 +574,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
       return
     }
     val sql = s"SELECT T.id, T.len, T.content, D.name, D.age, D.nominal_age " +
-      "FROM src AS T JOIN userTableWithComputedColumn " +
+      s"FROM src AS T JOIN $userTableWithComputedColumnSubClause " +
       "for system_time as of T.proctime AS D ON T.id = D.id"
 
     val sink = new TestingAppendSink
@@ -565,7 +593,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
       return
     }
     val sql = s"SELECT T.id, T.len, T.content, D.name, D.age, D.nominal_age " +
-      "FROM src AS T JOIN userTableWithComputedColumn " +
+      s"FROM src AS T JOIN $userTableWithComputedColumnSubClause " +
       "for system_time as of T.proctime AS D ON T.id = D.id and D.nominal_age > 12"
 
     val sink = new TestingAppendSink
@@ -648,11 +676,11 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
            |""".stripMargin
       tEnv.executeSql(sourceDdl)
       val sql =
-        """
-          |SELECT T.id, D.name, D.age FROM T 
-          |LEFT JOIN user_table FOR SYSTEM_TIME AS OF T.proc AS D 
-          |ON T.id = D.id
-          |""".stripMargin
+        s"""
+           |SELECT T.id, D.name, D.age FROM T 
+           |LEFT JOIN $userTableSubClause FOR SYSTEM_TIME AS OF T.proc AS D 
+           |ON T.id = D.id
+           |""".stripMargin
       val sink = new TestingAppendSink
       tEnv.sqlQuery(sql).toDataStream.addSink(sink)
       env.execute()
@@ -710,7 +738,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
     val table1 = tEnv.sqlQuery(sql1)
     tEnv.createTemporaryView("t1", table1)
 
-    val sql2 = "SELECT t1.id, D.name, D.age FROM t1 LEFT JOIN user_table " +
+    val sql2 = s"SELECT t1.id, D.name, D.age FROM t1 LEFT JOIN $userTableSubClause " +
       "for system_time as of t1.proctime AS D ON t1.id = D.id"
 
     val sink = new TestingRetractSink
@@ -732,7 +760,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
     val table1 = tEnv.sqlQuery(sql1)
     tEnv.createTemporaryView("t1", table1)
 
-    val sql2 = "SELECT t1.id, D.name, D.age FROM t1 LEFT JOIN user_table " +
+    val sql2 = s"SELECT t1.id, D.name, D.age FROM t1 LEFT JOIN $userTableSubClause " +
       "for system_time as of t1.proctime AS D ON D.id = 3"
 
     val sink = new TestingRetractSink
@@ -755,7 +783,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
     val table1 = tEnv.sqlQuery(sql1)
     tEnv.createTemporaryView("t1", table1)
 
-    val sql2 = "SELECT t1.id FROM t1 LEFT JOIN user_table " +
+    val sql2 = s"SELECT t1.id FROM t1 LEFT JOIN $userTableSubClause " +
       "for system_time as of t1.proctime AS D ON D.id = 3"
 
     val sink = new TestingRetractSink
@@ -782,7 +810,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
     tEnv
       .sqlQuery(s"""
                    |SELECT $maxRetryTwiceHint T.id, T.len, T.content, D.name FROM src AS T
-                   |JOIN user_table for system_time as of T.proctime AS D
+                   |JOIN $userTableSubClause for system_time as of T.proctime AS D
                    |ON T.id = D.id
                    |""".stripMargin)
       .toDataStream
@@ -801,7 +829,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
     tEnv
       .sqlQuery(s"""
                    |SELECT $maxRetryOnceHint T.id, T.len, T.content, D.name FROM src AS T
-                   |JOIN user_table_with_lookup_threshold3 for system_time as of T.proctime AS D
+                   |JOIN $userTableThreshold3 for system_time as of T.proctime AS D
                    |ON T.id = D.id
                    |""".stripMargin)
       .toDataStream
@@ -826,7 +854,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
     tEnv
       .sqlQuery(s"""
                    |SELECT $maxRetryTwiceHint T.id, T.len, T.content, D.name FROM src AS T
-                   |JOIN user_table_with_lookup_threshold2 for system_time as of T.proctime AS D
+                   |JOIN $userTableThreshold2 for system_time as of T.proctime AS D
                    |ON T.id = D.id
                    |""".stripMargin)
       .toDataStream
@@ -846,7 +874,7 @@ class LookupJoinITCase(legacyTableSource: Boolean, cacheType: LookupCacheType)
     tEnv
       .sqlQuery(s"""
                    |SELECT $largerRetryHint T.id, T.len, T.content, D.name FROM src AS T
-                   |JOIN user_table_with_lookup_threshold2 for system_time as of T.proctime AS D
+                   |JOIN $userTableThreshold2 for system_time as of T.proctime AS D
                    |ON T.id = D.id
                    |""".stripMargin)
       .toDataStream
@@ -862,14 +890,20 @@ object LookupJoinITCase {
 
   val LEGACY_TABLE_SOURCE: JBoolean = JBoolean.TRUE;
   val DYNAMIC_TABLE_SOURCE: JBoolean = JBoolean.FALSE;
+  val PARTITION_JOIN: JBoolean = JBoolean.TRUE;
+  val NO_PARTITION_JOIN: JBoolean = JBoolean.FALSE;
 
   @Parameters(name = "LegacyTableSource={0}, cacheType={1}")
   def parameters(): JCollection[Array[Object]] = {
     Seq[Array[AnyRef]](
-      Array(LEGACY_TABLE_SOURCE, LookupCacheType.NONE),
-      Array(DYNAMIC_TABLE_SOURCE, LookupCacheType.NONE),
-      Array(DYNAMIC_TABLE_SOURCE, LookupCacheType.PARTIAL),
-      Array(DYNAMIC_TABLE_SOURCE, LookupCacheType.FULL)
+      Array(LEGACY_TABLE_SOURCE, LookupCacheType.NONE, NO_PARTITION_JOIN),
+      Array(DYNAMIC_TABLE_SOURCE, LookupCacheType.NONE, NO_PARTITION_JOIN),
+      Array(DYNAMIC_TABLE_SOURCE, LookupCacheType.PARTIAL, NO_PARTITION_JOIN),
+      Array(DYNAMIC_TABLE_SOURCE, LookupCacheType.FULL, NO_PARTITION_JOIN),
+      Array(LEGACY_TABLE_SOURCE, LookupCacheType.NONE, PARTITION_JOIN),
+      Array(DYNAMIC_TABLE_SOURCE, LookupCacheType.NONE, PARTITION_JOIN),
+      Array(DYNAMIC_TABLE_SOURCE, LookupCacheType.PARTIAL, PARTITION_JOIN),
+      Array(DYNAMIC_TABLE_SOURCE, LookupCacheType.FULL, PARTITION_JOIN)
     )
   }
 }

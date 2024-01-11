@@ -62,6 +62,8 @@ public abstract class FlinkHints {
      */
     public static final String HINT_NAME_JSON_AGGREGATE_WRAPPED = "JSON_AGGREGATE_WRAPPED";
 
+    public static final String HINT_NAME_PARTITIONED_JOIN = "PARTITIONED_JOIN";
+
     // ~ Tools ------------------------------------------------------------------
 
     /**

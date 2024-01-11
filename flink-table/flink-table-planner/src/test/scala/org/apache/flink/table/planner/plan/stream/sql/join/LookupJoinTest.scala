@@ -51,9 +51,15 @@ import org.junit.jupiter.api.extension.ExtendWith
  * [[org.apache.flink.table.connector.source.LookupTableSource]] should be identical.
  */
 @ExtendWith(Array(classOf[ParameterizedTestExtension]))
-class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Serializable {
+class LookupJoinTest(legacyTableSource: Boolean, partitionedJoin: Boolean)
+  extends TableTestBase
+  with Serializable {
 
   private val util = streamTestUtil()
+  private var asyncLookupTableSubClause: String = _
+  private var lookupTableSubClause: String = _
+  private var lookupTableWithComputedColumnSubClause: String = _
+  private var lookupTable2SubClause: String = _
 
   @BeforeEach
   def before(): Unit = {
@@ -115,19 +121,32 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
     // for json plan test
     util.tableEnv.getConfig
       .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, Int.box(4))
+
+    if (partitionedJoin) {
+      lookupTableSubClause = "LookupTable /*+ PARTITIONED_JOIN */"
+      lookupTableWithComputedColumnSubClause =
+        "LookupTableWithComputedColumn /*+ PARTITIONED_JOIN */"
+      asyncLookupTableSubClause = "AsyncLookupTable /*+ PARTITIONED_JOIN */"
+      lookupTable2SubClause = "LookupTable2 /*+ PARTITIONED_JOIN */"
+    } else {
+      lookupTableSubClause = "LookupTable"
+      lookupTableWithComputedColumnSubClause = "LookupTableWithComputedColumn"
+      asyncLookupTableSubClause = "AsyncLookupTable"
+      lookupTable2SubClause = "LookupTable2"
+    }
   }
 
   @TestTemplate
   def testJoinInvalidJoinTemporalTable(): Unit = {
     // must follow a period specification
     expectExceptionThrown(
-      "SELECT * FROM MyTable AS T JOIN LookupTable T.proctime AS D ON T.a = D.id",
+      s"SELECT * FROM MyTable AS T JOIN $lookupTableSubClause T.proctime AS D ON T.a = D.id",
       "SQL parse failed",
       classOf[SqlParserException])
 
     // only support left or inner join
     expectExceptionThrown(
-      "SELECT * FROM MyTable AS T RIGHT JOIN LookupTable " +
+      s"SELECT * FROM MyTable AS T RIGHT JOIN $lookupTableSubClause " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id",
       "Correlate has invalid join type RIGHT",
       classOf[AssertionError]
@@ -135,10 +154,10 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
 
     // only support join on raw key of right table
     expectExceptionThrown(
-      "SELECT * FROM MyTable AS T LEFT JOIN LookupTable " +
+      s"SELECT * FROM MyTable AS T LEFT JOIN $lookupTableSubClause " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a + 1 = D.id + 2",
       "Temporal table join requires an equality condition on fields of table " +
-        "[default_catalog.default_database.LookupTable].",
+        s"[default_catalog.default_database.LookupTable].",
       classOf[TableException]
     )
   }
@@ -148,7 +167,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
 
     // does not support join condition contains `IS NOT DISTINCT`
     expectExceptionThrown(
-      "SELECT * FROM MyTable AS T LEFT JOIN LookupTable " +
+      s"SELECT * FROM MyTable AS T LEFT JOIN $lookupTableSubClause " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a IS NOT  DISTINCT FROM D.id",
       "LookupJoin doesn't support join condition contains 'a IS NOT DISTINCT FROM b' (or " +
         "alternative '(a = b) or (a IS NULL AND b IS NULL)')",
@@ -157,7 +176,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
 
     // does not support join condition contains `IS NOT  DISTINCT` and similar syntax
     expectExceptionThrown(
-      "SELECT * FROM MyTable AS T LEFT JOIN LookupTable " +
+      s"SELECT * FROM MyTable AS T LEFT JOIN $lookupTableSubClause " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id OR (T.a IS NULL AND D.id IS NULL)",
       "LookupJoin doesn't support join condition contains 'a IS NOT DISTINCT FROM b' (or " +
         "alternative '(a = b) or (a IS NULL AND b IS NULL)')",
@@ -182,7 +201,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
 
     createLookupTable("LookupTable2", new InvalidTableFunctionEvalSignature)
     expectExceptionThrown(
-      "SELECT * FROM T JOIN LookupTable2 " +
+      s"SELECT * FROM T JOIN $lookupTable2SubClause " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id AND T.b = D.name AND T.ts = D.ts",
       "Could not find an implementation method 'eval' in class " +
         "'org.apache.flink.table.planner.plan.utils.InvalidTableFunctionEvalSignature' " +
@@ -268,7 +287,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
     assertThatThrownBy(
       () =>
         util.verifyExecPlan(
-          "SELECT * FROM MyTable AS T JOIN LookupTable "
+          s"SELECT * FROM MyTable AS T JOIN $lookupTableSubClause "
             + "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.b = D.id"))
       .hasMessageContaining("implicit type conversion between VARCHAR(2147483647) and INTEGER " +
         "is not supported on join's condition now")
@@ -277,7 +296,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
 
   @TestTemplate
   def testJoinTemporalTable(): Unit = {
-    val sql = "SELECT * FROM MyTable AS T JOIN LookupTable " +
+    val sql = s"SELECT * FROM MyTable AS T JOIN $lookupTableSubClause " +
       "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
 
     util.verifyExecPlan(sql)
@@ -285,7 +304,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
 
   @TestTemplate
   def testLeftJoinTemporalTable(): Unit = {
-    val sql = "SELECT * FROM MyTable AS T LEFT JOIN LookupTable " +
+    val sql = s"SELECT * FROM MyTable AS T LEFT JOIN $lookupTableSubClause " +
       "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
 
     util.verifyExecPlan(sql)
@@ -295,7 +314,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testJoinTemporalTableWithNestedQuery(): Unit = {
     val sql = "SELECT * FROM " +
       "(SELECT a, b, proctime FROM MyTable WHERE c > 1000) AS T " +
-      "JOIN LookupTable " +
+      s"JOIN $lookupTableSubClause " +
       "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
 
     util.verifyExecPlan(sql)
@@ -304,11 +323,11 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testJoinTemporalTableWithProjectionPushDown(): Unit = {
     val sql =
-      """
-        |SELECT T.*, D.id
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |ON T.a = D.id
+      s"""
+         |SELECT T.*, D.id
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |ON T.a = D.id
       """.stripMargin
 
     util.verifyExecPlan(sql)
@@ -317,11 +336,11 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testJoinTemporalTableWithFilterPushDown(): Unit = {
     val sql =
-      """
-        |SELECT * FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |ON T.a = D.id AND D.age = 10
-        |WHERE T.c > 1000
+      s"""
+         |SELECT * FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |ON T.a = D.id AND D.age = 10
+         |WHERE T.c > 1000
       """.stripMargin
 
     util.verifyExecPlan(sql)
@@ -330,11 +349,11 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testJoinTemporalTableWithCalcPushDown(): Unit = {
     val sql =
-      """
-        |SELECT * FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |ON T.a = D.id AND D.age = 10
-        |WHERE cast(D.name as bigint) > 1000
+      s"""
+         |SELECT * FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |ON T.a = D.id AND D.age = 10
+         |WHERE cast(D.name as bigint) > 1000
       """.stripMargin
 
     util.verifyExecPlan(sql)
@@ -343,11 +362,11 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testJoinTemporalTableWithMultiIndexColumn(): Unit = {
     val sql =
-      """
-        |SELECT * FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |ON T.a = D.id AND D.age = 10 AND D.name = 'AAA'
-        |WHERE T.c > 1000
+      s"""
+         |SELECT * FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |ON T.a = D.id AND D.age = 10 AND D.name = 'AAA'
+         |WHERE T.c > 1000
       """.stripMargin
 
     util.verifyExecPlan(sql)
@@ -365,7 +384,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
     val sql2 =
       s"""
          |SELECT T.* FROM ($sql1) AS T
-         |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proc AS D
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proc AS D
          |ON T.a = D.id
          |WHERE D.age > 10
       """.stripMargin
@@ -383,11 +402,11 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testJoinTemporalTableWithTrueCondition(): Unit = {
     val sql =
-      """
-        |SELECT * FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |ON true
-        |WHERE T.c > 1000
+      s"""
+         |SELECT * FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |ON true
+         |WHERE T.c > 1000
       """.stripMargin
 
     assertThatThrownBy(() => util.verifyExplain(sql))
@@ -400,10 +419,10 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testJoinTemporalTableWithFunctionAndConstantCondition(): Unit = {
 
     val sql =
-      """
-        |SELECT * FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |ON T.b = concat(D.name, '!') AND D.age = 11
+      s"""
+         |SELECT * FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |ON T.b = concat(D.name, '!') AND D.age = 11
       """.stripMargin
 
     util.verifyExecPlan(sql)
@@ -413,10 +432,10 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testJoinTemporalTableWithMultiFunctionAndConstantCondition(): Unit = {
 
     val sql =
-      """
-        |SELECT * FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |ON T.a = D.id + 1 AND T.b = concat(D.name, '!') AND D.age = 11
+      s"""
+         |SELECT * FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |ON T.a = D.id + 1 AND T.b = concat(D.name, '!') AND D.age = 11
       """.stripMargin
 
     util.verifyExecPlan(sql)
@@ -425,11 +444,11 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testJoinTemporalTableWithFunctionAndReferenceCondition(): Unit = {
     val sql =
-      """
-        |SELECT * FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |ON T.a = D.id AND T.b = concat(D.name, '!')
-        |WHERE D.name LIKE 'Jack%'
+      s"""
+         |SELECT * FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |ON T.a = D.id AND T.b = concat(D.name, '!')
+         |WHERE D.name LIKE 'Jack%'
       """.stripMargin
 
     util.verifyExecPlan(sql)
@@ -438,12 +457,12 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testJoinTemporalTableWithUdfEqualFilter(): Unit = {
     val sql =
-      """
-        |SELECT
-        |  T.a, T.b, T.c, D.name
-        |FROM
-        |  MyTable AS T JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
-        |WHERE CONCAT('Hello-', D.name) = 'Hello-Jark'
+      s"""
+         |SELECT
+         |  T.a, T.b, T.c, D.name
+         |FROM
+         |  MyTable AS T JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
+         |WHERE CONCAT('Hello-', D.name) = 'Hello-Jark'
       """.stripMargin
 
     util.verifyExecPlan(sql)
@@ -454,13 +473,13 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
     // Computed column do not support in legacyTableSource.
     assumeThat(legacyTableSource).isFalse
     val sql =
-      """
-        |SELECT
-        |  T.a, T.b, T.c, D.name, D.age, D.nominal_age
-        |FROM
-        |  MyTable AS T JOIN LookupTableWithComputedColumn FOR SYSTEM_TIME AS OF T.proctime AS D
-        |  ON T.a = D.id
-        |""".stripMargin
+      s"""
+         |SELECT
+         |  T.a, T.b, T.c, D.name, D.age, D.nominal_age
+         |FROM
+         |  MyTable AS T JOIN $lookupTableWithComputedColumnSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |  ON T.a = D.id
+         |""".stripMargin
     util.verifyExecPlan(sql)
   }
 
@@ -469,19 +488,19 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
     // Computed column do not support in legacyTableSource.
     assumeThat(legacyTableSource).isFalse
     val sql =
-      """
-        |SELECT
-        |  T.a, T.b, T.c, D.name, D.age, D.nominal_age
-        |FROM
-        |  MyTable AS T JOIN LookupTableWithComputedColumn FOR SYSTEM_TIME AS OF T.proctime AS D
-        |  ON T.a = D.id and D.nominal_age > 12
-        |""".stripMargin
+      s"""
+         |SELECT
+         |  T.a, T.b, T.c, D.name, D.age, D.nominal_age
+         |FROM
+         |  MyTable AS T JOIN $lookupTableWithComputedColumnSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |  ON T.a = D.id and D.nominal_age > 12
+         |""".stripMargin
     util.verifyExecPlan(sql)
   }
 
   @TestTemplate
   def testJoinTemporalTableWithMultiConditionOnSameDimField(): Unit = {
-    val sql = "SELECT * FROM MyTable AS T JOIN LookupTable " +
+    val sql = s"SELECT * FROM MyTable AS T JOIN $lookupTableSubClause " +
       "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id and CAST(T.c as INT) = D.id"
 
     util.verifyExecPlan(sql)
@@ -499,12 +518,12 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
                     |)
                     |""".stripMargin)
     val sql =
-      """
-        |SELECT MyTable.b, LookupTable2.id
-        |FROM MyTable
-        |LEFT JOIN LookupTable2 FOR SYSTEM_TIME AS OF MyTable.`proctime`
-        |ON MyTable.a = CAST(LookupTable2.`id` as INT)
-        |""".stripMargin
+      s"""
+         |SELECT MyTable.b, LookupTable2.id
+         |FROM MyTable
+         |LEFT JOIN $lookupTable2SubClause FOR SYSTEM_TIME AS OF MyTable.`proctime`
+         |ON MyTable.a = CAST(LookupTable2.`id` as INT)
+         |""".stripMargin
 
     assertThatThrownBy(() => verifyTranslationSuccess(sql))
       .hasMessageContaining("Temporal table join requires an equality condition on fields of " +
@@ -525,24 +544,24 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
                     |""".stripMargin)
 
     val sql =
-      """
-        |SELECT MyTable.b, LookupTable2.id
-        |FROM MyTable
-        |LEFT JOIN LookupTable2 FOR SYSTEM_TIME AS OF MyTable.`proctime`
-        |ON MyTable.b = CAST(LookupTable2.`name` as String)
-        |""".stripMargin
+      s"""
+         |SELECT MyTable.b, LookupTable2.id
+         |FROM MyTable
+         |LEFT JOIN $lookupTable2SubClause FOR SYSTEM_TIME AS OF MyTable.`proctime`
+         |ON MyTable.b = CAST(LookupTable2.`name` as String)
+         |""".stripMargin
     verifyTranslationSuccess(sql)
   }
 
   @TestTemplate
   def testJoinTemporalTableWithCTE(): Unit = {
     val sql =
-      """
-        |WITH MyLookupTable AS (SELECT * FROM MyTable),
-        |OtherLookupTable AS (SELECT * FROM LookupTable)
-        |SELECT MyLookupTable.b FROM MyLookupTable
-        |JOIN OtherLookupTable FOR SYSTEM_TIME AS OF MyLookupTable.proctime AS D
-        |ON MyLookupTable.a = D.id AND D.age = 10
+      s"""
+         |WITH MyLookupTable AS (SELECT * FROM MyTable),
+         |OtherLookupTable AS (SELECT * FROM $lookupTableSubClause)
+         |SELECT MyLookupTable.b FROM MyLookupTable
+         |JOIN OtherLookupTable FOR SYSTEM_TIME AS OF MyLookupTable.proctime AS D
+         |ON MyLookupTable.a = D.id AND D.age = 10
       """.stripMargin
 
     util.verifyExecPlan(sql)
@@ -556,20 +575,30 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
       OptimizerConfigOptions.NonDeterministicUpdateStrategy.TRY_RESOLVE)
 
     val sql =
-      """
-        |INSERT INTO Sink1
-        |SELECT T.a, D.name, D.age
-        |FROM (SELECT max(a) a, count(c) c, PROCTIME() proctime FROM MyTable GROUP BY b) T
-        | LEFT JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |  ON D.id = 100
+      s"""
+         |INSERT INTO Sink1
+         |SELECT T.a, D.name, D.age
+         |FROM (SELECT max(a) a, count(c) c, PROCTIME() proctime FROM MyTable GROUP BY b) T
+         | LEFT JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |  ON D.id = 100
       """.stripMargin
     val actual = util.tableEnv.explainSql(sql, ExplainDetail.JSON_EXECUTION_PLAN)
     val expected = if (legacyTableSource) {
-      readFromResource(
-        "explain/stream/join/lookup/testAggAndAllConstantLookupKeyWithTryResolveMode.out")
+      if (partitionedJoin) {
+        readFromResource(
+          "explain/stream/join/lookup/testAggAndAllConstantLookupKeyWithTryResolveMode_newSourcePartitionJoin.out")
+      } else {
+        readFromResource(
+          "explain/stream/join/lookup/testAggAndAllConstantLookupKeyWithTryResolveMode.out")
+      }
     } else {
-      readFromResource(
-        "explain/stream/join/lookup/testAggAndAllConstantLookupKeyWithTryResolveMode_newSource.out")
+      if (partitionedJoin) {
+        readFromResource(
+          "explain/stream/join/lookup/testAggAndAllConstantLookupKeyWithTryResolveMode_partitionJoin.out")
+      } else {
+        readFromResource(
+          "explain/stream/join/lookup/testAggAndAllConstantLookupKeyWithTryResolveMode_newSource.out")
+      }
     }
     assertThat(replaceNodeIdInOperator(replaceStreamNodeId(replaceStageId(actual))))
       .isEqualTo(replaceNodeIdInOperator(replaceStreamNodeId(replaceStageId(expected))))
@@ -579,148 +608,148 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testInvalidJoinHint(): Unit = {
     // lost required hint option 'table'
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('tableName'='LookupTable') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('tableName'='LookupTable') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint: incomplete required option(s): [Key: 'table' , default: null (fallback keys: [])]",
       classOf[AssertionError]
     )
 
     // invalid async option value
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'async'='yes') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='LookupTable', 'async'='yes') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint options: Could not parse value 'yes' for key 'async'",
       classOf[AssertionError]
     )
 
     // invalid async output-mode option value
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'async'='true', 'output-mode'='allow-unordered') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='LookupTable', 'async'='true', 'output-mode'='allow-unordered') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint options: Could not parse value 'allow-unordered' for key 'output-mode'",
       classOf[AssertionError]
     )
 
     // invalid async timeout option value
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'async'='true', 'timeout'='300 si') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='LookupTable', 'async'='true', 'timeout'='300 si') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint options: Could not parse value '300 si' for key 'timeout'",
       classOf[AssertionError]
     )
 
     // invalid retry-strategy option value
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-strategy'='fixed-delay') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-strategy'='fixed-delay') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint options: Could not parse value 'fixed-delay' for key 'retry-strategy'",
       classOf[AssertionError]
     )
 
     // invalid retry fixed-delay option value
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'fixed-delay'='100 nano sec') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='LookupTable', 'fixed-delay'='100 nano sec') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint options: Could not parse value '100 nano sec' for key 'fixed-delay'",
       classOf[AssertionError]
     )
 
     // invalid retry max-attempts option value
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'max-attempts'='100.0') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='LookupTable', 'max-attempts'='100.0') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint options: Could not parse value '100.0' for key 'max-attempts'",
       classOf[AssertionError]
     )
 
     // incomplete retry hint options
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'max-attempts'='100') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='LookupTable', 'max-attempts'='100') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint: retry options can be both null or all not null",
       classOf[AssertionError]
     )
 
     // invalid retry option value
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-predicate'='exception', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='-3') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-predicate'='exception', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='-3') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint option: unsupported retry-predicate 'exception', only 'lookup_miss' is supported currently",
       classOf[AssertionError]
     )
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='-3') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='-3') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint option: max-attempts value should be positive integer but was -3",
       classOf[AssertionError]
     )
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='-10s', 'max-attempts'='3') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='-10s', 'max-attempts'='3') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint options: Could not parse value '-10s' for key 'fixed-delay'",
       classOf[AssertionError]
     )
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-predicate'='lookup-miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='$lookupTableSubClause', 'retry-predicate'='lookup-miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint option: unsupported retry-predicate 'lookup-miss', only 'lookup_miss' is supported currently",
       classOf[AssertionError]
     )
     expectExceptionThrown(
-      """
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed-delay', 'fixed-delay'='10s', 'max-attempts'='3') */ *
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        | ON T.a = D.id
-        |""".stripMargin,
+      s"""
+         |SELECT /*+ LOOKUP('table'='$lookupTableSubClause', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed-delay', 'fixed-delay'='10s', 'max-attempts'='3') */ *
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         | ON T.a = D.id
+         |""".stripMargin,
       "Invalid LOOKUP hint options: Could not parse value 'fixed-delay' for key 'retry-strategy'",
       classOf[AssertionError]
     )
@@ -729,15 +758,16 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testJoinHintWithTableAlias(): Unit = {
     val sql =
-      "SELECT /*+ LOOKUP('table'='D', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ * FROM MyTable AS T JOIN LookupTable " +
+      s"SELECT /*+ LOOKUP('table'='D', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ * FROM MyTable AS T JOIN $lookupTableSubClause " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
     util.verifyExecPlan(sql)
   }
 
   @TestTemplate
   def testJoinHintWithTableNameOnly(): Unit = {
-    val sql = "SELECT /*+ LOOKUP('table'='LookupTable') */ * FROM MyTable AS T JOIN LookupTable " +
-      "FOR SYSTEM_TIME AS OF T.proctime ON T.a = LookupTable.id"
+    val sql =
+      s"SELECT /*+ LOOKUP('table'='LookupTable') */ * FROM MyTable AS T JOIN $lookupTableSubClause " +
+        "FOR SYSTEM_TIME AS OF T.proctime ON T.a = LookupTable.id"
     util.verifyExecPlan(sql)
   }
 
@@ -745,12 +775,12 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testMultipleJoinHintsWithSameTableName(): Unit = {
     // only the first hint will take effect
     val sql =
-      """
-        |SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'output-mode'='allow_unordered'),
-        |           LOOKUP('table'='AsyncLookupTable', 'output-mode'='ordered') */ *
-        |FROM MyTable AS T
-        |JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T.proctime
-        | ON T.a = AsyncLookupTable.id
+      s"""
+         |SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'output-mode'='allow_unordered'),
+         |           LOOKUP('table'='AsyncLookupTable', 'output-mode'='ordered') */ *
+         |FROM MyTable AS T
+         |JOIN $asyncLookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime
+         | ON T.a = AsyncLookupTable.id
       """.stripMargin
     util.verifyExecPlan(sql)
   }
@@ -759,12 +789,12 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testMultipleJoinHintsWithSameTableAlias(): Unit = {
     // only the first hint will take effect
     val sql =
-      """
-        |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered'),
-        |           LOOKUP('table'='D', 'output-mode'='ordered') */ *
-        |FROM MyTable AS T
-        |JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T.proctime AS D 
-        | ON T.a = D.id
+      s"""
+         |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered'),
+         |           LOOKUP('table'='D', 'output-mode'='ordered') */ *
+         |FROM MyTable AS T
+         |JOIN $asyncLookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D 
+         | ON T.a = D.id
       """.stripMargin
     util.verifyExecPlan(sql)
   }
@@ -773,30 +803,29 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testMultipleJoinHintsWithDifferentTableName(): Unit = {
     // both hints on corresponding tables will take effect
     val sql =
-      """
-        |SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'output-mode'='allow_unordered'),
-        |           LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ *
-        |FROM MyTable AS T
-        |JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T.proctime
-        |  ON T.a = AsyncLookupTable.id
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime
-        |  ON T.a = LookupTable.id
+      s"""
+         |SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'output-mode'='allow_unordered'),
+         |           LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ *
+         |FROM MyTable AS T
+         |JOIN $asyncLookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime
+         |  ON T.a = AsyncLookupTable.id
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime
+         |  ON T.a = LookupTable.id
       """.stripMargin
-    util.verifyExecPlan(sql)
   }
 
   @TestTemplate
   def testMultipleJoinHintsWithDifferentTableAlias(): Unit = {
     // both hints on corresponding tables will take effect
     val sql =
-      """
-        |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered'),
-        |           LOOKUP('table'='D1', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ *
-        |FROM MyTable AS T
-        |JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T.proctime AS D 
-        |  ON T.a = D.id
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D1 
-        |  ON T.a = D1.id
+      s"""
+         |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered'),
+         |           LOOKUP('table'='D1', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ *
+         |FROM MyTable AS T
+         |JOIN $asyncLookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D 
+         |  ON T.a = D.id
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D1 
+         |  ON T.a = D1.id
       """.stripMargin
     util.verifyExecPlan(sql)
   }
@@ -804,7 +833,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testJoinSyncTableWithAsyncHint(): Unit = {
     val sql =
-      "SELECT /*+ LOOKUP('table'='D', 'async'='true') */ * FROM MyTable AS T JOIN LookupTable " +
+      s"SELECT /*+ LOOKUP('table'='D', 'async'='true') */ * FROM MyTable AS T JOIN $lookupTableSubClause " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
     util.verifyExecPlan(sql)
   }
@@ -813,7 +842,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testJoinAsyncTableWithAsyncHint(): Unit = {
     val sql =
       "SELECT /*+ LOOKUP('table'='D', 'async'='true') */ * " +
-        "FROM MyTable AS T JOIN AsyncLookupTable " +
+        s"FROM MyTable AS T JOIN $asyncLookupTableSubClause " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
     util.verifyExecPlan(sql)
   }
@@ -822,7 +851,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testJoinAsyncTableWithSyncHint(): Unit = {
     val sql =
       "SELECT /*+ LOOKUP('table'='D', 'async'='false') */ * " +
-        "FROM MyTable AS T JOIN AsyncLookupTable " +
+        s"FROM MyTable AS T JOIN $asyncLookupTableSubClause " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
     util.verifyExecPlan(sql)
   }
@@ -835,13 +864,13 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
 
     val stmt = util.tableEnv.asInstanceOf[TestingTableEnvironment].createStatementSet()
     stmt.addInsertSql(
-      """
-        |INSERT INTO Sink1
-        |SELECT T.a, D.name, D.age
-        |FROM (SELECT max(a) a, count(c) c, PROCTIME() proctime FROM MyTable GROUP BY b) T
-        |LEFT JOIN AsyncLookupTable
-        |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
-        |""".stripMargin)
+      s"""
+         |INSERT INTO Sink1
+         |SELECT T.a, D.name, D.age
+         |FROM (SELECT max(a) a, count(c) c, PROCTIME() proctime FROM MyTable GROUP BY b) T
+         |LEFT JOIN $asyncLookupTableSubClause
+         |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
+         |""".stripMargin)
 
     util.verifyExplain(stmt, ExplainDetail.JSON_EXECUTION_PLAN)
   }
@@ -853,13 +882,13 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
 
     val stmt = util.tableEnv.asInstanceOf[TestingTableEnvironment].createStatementSet()
     stmt.addInsertSql(
-      """
-        |INSERT INTO Sink1
-        |SELECT T.a, D.name, D.age
-        |FROM (SELECT max(a) a, count(c) c, PROCTIME() proctime FROM MyTable GROUP BY b) T
-        |LEFT JOIN AsyncLookupTable
-        |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
-        |""".stripMargin)
+      s"""
+         |INSERT INTO Sink1
+         |SELECT T.a, D.name, D.age
+         |FROM (SELECT max(a) a, count(c) c, PROCTIME() proctime FROM MyTable GROUP BY b) T
+         |LEFT JOIN $asyncLookupTableSubClause
+         |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
+         |""".stripMargin)
 
     assertThatThrownBy(() => util.verifyExplain(stmt, ExplainDetail.JSON_EXECUTION_PLAN))
       .hasMessageContaining("Required sync lookup function by planner, but table")
@@ -869,13 +898,13 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testAsyncJoinWithDefaultParams(): Unit = {
     val stmt = util.tableEnv.asInstanceOf[TestingTableEnvironment].createStatementSet()
-    stmt.addInsertSql("""
-                        |INSERT INTO Sink1
-                        |SELECT T.a, D.name, D.age
-                        |FROM MyTable T
-                        |JOIN AsyncLookupTable
-                        |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
-                        |""".stripMargin)
+    stmt.addInsertSql(s"""
+                         |INSERT INTO Sink1
+                         |SELECT T.a, D.name, D.age
+                         |FROM MyTable T
+                         |JOIN $asyncLookupTableSubClause
+                         |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
+                         |""".stripMargin)
 
     util.verifyExplain(stmt, ExplainDetail.JSON_EXECUTION_PLAN)
   }
@@ -884,14 +913,14 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testJoinWithAsyncHint(): Unit = {
     val stmt = util.tableEnv.asInstanceOf[TestingTableEnvironment].createStatementSet()
     stmt.addInsertSql(
-      """
-        |INSERT INTO Sink1
-        |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered', 'time-out'='600s', 'capacity'='300') */
-        | T.a, D.name, D.age
-        |FROM MyTable T
-        |JOIN AsyncLookupTable
-        |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
-        |""".stripMargin)
+      s"""
+         |INSERT INTO Sink1
+         |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered', 'time-out'='600s', 'capacity'='300') */
+         | T.a, D.name, D.age
+         |FROM MyTable T
+         |JOIN $asyncLookupTableSubClause
+         |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
+         |""".stripMargin)
 
     util.verifyExplain(stmt, ExplainDetail.JSON_EXECUTION_PLAN)
   }
@@ -900,14 +929,14 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testJoinWithRetryHint(): Unit = {
     val stmt = util.tableEnv.asInstanceOf[TestingTableEnvironment].createStatementSet()
     stmt.addInsertSql(
-      """
-        |INSERT INTO Sink1
-        |SELECT /*+ LOOKUP('table'='D', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */
-        | T.a, D.name, D.age
-        |FROM MyTable T
-        |JOIN LookupTable
-        |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
-        |""".stripMargin)
+      s"""
+         |INSERT INTO Sink1
+         |SELECT /*+ LOOKUP('table'='D', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */
+         | T.a, D.name, D.age
+         |FROM MyTable T
+         |JOIN $lookupTableSubClause
+         |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
+         |""".stripMargin)
 
     util.verifyExplain(stmt, ExplainDetail.JSON_EXECUTION_PLAN)
   }
@@ -916,14 +945,14 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   def testJoinWithAsyncAndRetryHint(): Unit = {
     val stmt = util.tableEnv.asInstanceOf[TestingTableEnvironment].createStatementSet()
     stmt.addInsertSql(
-      """
-        |INSERT INTO Sink1
-        |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered', 'time-out'='600s', 'capacity'='300', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */
-        | T.a, D.name, D.age
-        |FROM MyTable T
-        |JOIN AsyncLookupTable
-        |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
-        |""".stripMargin)
+      s"""
+         |INSERT INTO Sink1
+         |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered', 'time-out'='600s', 'capacity'='300', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */
+         | T.a, D.name, D.age
+         |FROM MyTable T
+         |JOIN $asyncLookupTableSubClause
+         |FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id
+         |""".stripMargin)
 
     util.verifyExplain(stmt, ExplainDetail.JSON_EXECUTION_PLAN)
   }
@@ -931,33 +960,33 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @TestTemplate
   def testJoinWithMixedCaseJoinHint(): Unit = {
     util.verifyExecPlan(
-      """
-        |SELECT /*+ LookuP('table'='D', 'retry-predicate'='lookup_miss',
-        |'retry-strategy'='fixed_delay', 'fixed-delay'='155 ms', 'max-attempts'='10',
-        |'async'='true', 'output-mode'='allow_unordered','capacity'='1000', 'time-out'='300 s')
-        |*/
-        |T.a
-        |FROM MyTable AS T
-        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |ON T.a = D.id
-        |""".stripMargin
+      s"""
+         |SELECT /*+ LookuP('table'='D', 'retry-predicate'='lookup_miss',
+         |'retry-strategy'='fixed_delay', 'fixed-delay'='155 ms', 'max-attempts'='10',
+         |'async'='true', 'output-mode'='allow_unordered','capacity'='1000', 'time-out'='300 s')
+         |*/
+         |T.a
+         |FROM MyTable AS T
+         |JOIN $lookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |ON T.a = D.id
+         |""".stripMargin
     )
   }
 
   @TestTemplate
   def testJoinHintWithNoPropagatingToSubQuery(): Unit = {
     util.verifyExecPlan(
-      """
-        |SELECT /*+ LOOKUP('table'='D', 'output-mode'='ordered','capacity'='200') */ T1.a
-        |FROM (
-        |   SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered', 'capacity'='1000') */
-        |     T.a a, T.proctime
-        |   FROM MyTable AS T JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
-        |     ON T.a = D.id
-        |) T1
-        |JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T1.proctime AS D
-        |ON T1.a=D.id
-        |""".stripMargin
+      s"""
+         |SELECT /*+ LOOKUP('table'='D', 'output-mode'='ordered','capacity'='200') */ T1.a
+         |FROM (
+         |   SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered', 'capacity'='1000') */
+         |     T.a a, T.proctime
+         |   FROM MyTable AS T JOIN $asyncLookupTableSubClause FOR SYSTEM_TIME AS OF T.proctime AS D
+         |     ON T.a = D.id
+         |) T1
+         |JOIN $asyncLookupTableSubClause FOR SYSTEM_TIME AS OF T1.proctime AS D
+         |ON T1.a=D.id
+         |""".stripMargin
     )
   }
 
@@ -1001,9 +1030,13 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
 }
 
 object LookupJoinTest {
-  @Parameters(name = "LegacyTableSource={0}")
+  @Parameters(name = "LegacyTableSource={0}, partitionedJoin={1}")
   def parameters(): JCollection[Array[Object]] = {
-    Seq[Array[AnyRef]](Array(JBoolean.TRUE), Array(JBoolean.FALSE))
+    Seq[Array[AnyRef]](
+      Array(JBoolean.FALSE, JBoolean.TRUE),
+      Array(JBoolean.TRUE, JBoolean.TRUE),
+      Array(JBoolean.TRUE, JBoolean.FALSE),
+      Array(JBoolean.FALSE, JBoolean.FALSE))
   }
 }
 

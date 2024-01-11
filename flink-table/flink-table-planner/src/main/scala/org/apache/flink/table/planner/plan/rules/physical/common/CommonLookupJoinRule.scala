@@ -19,6 +19,8 @@ package org.apache.flink.table.planner.plan.rules.physical.common
 
 import org.apache.flink.table.api.TableException
 import org.apache.flink.table.connector.source.LookupTableSource
+import org.apache.flink.table.planner.hint.FlinkHints
+import org.apache.flink.table.planner.plan.`trait`.FlinkRelDistribution
 import org.apache.flink.table.planner.plan.nodes.logical._
 import org.apache.flink.table.planner.plan.nodes.physical.common.{CommonPhysicalLegacyTableSourceScan, CommonPhysicalLookupJoin, CommonPhysicalTableSourceScan}
 import org.apache.flink.table.planner.plan.rules.common.CommonTemporalTableJoinRule
@@ -26,10 +28,10 @@ import org.apache.flink.table.planner.plan.schema.TimeIndicatorRelDataType
 import org.apache.flink.table.planner.plan.utils.JoinUtil
 import org.apache.flink.table.sources.LookupableTableSource
 
-import org.apache.calcite.plan.{RelOptRule, RelOptRuleCall, RelOptTable}
+import org.apache.calcite.plan.{RelOptRule, RelOptRuleCall, RelOptTable, RelTraitSet}
 import org.apache.calcite.plan.RelOptRule.{any, operand}
 import org.apache.calcite.rel.RelNode
-import org.apache.calcite.rel.core.TableScan
+import org.apache.calcite.rel.core.{JoinInfo, TableScan}
 import org.apache.calcite.rex.RexProgram
 
 import java.util
@@ -112,7 +114,25 @@ trait CommonLookupJoinRule extends CommonTemporalTableJoinRule {
       join: FlinkLogicalJoin,
       input: FlinkLogicalRel,
       temporalTable: RelOptTable,
+      enablePartitionedJoin: Boolean,
       calcProgram: Option[RexProgram]): CommonPhysicalLookupJoin
+
+  protected def enablePartitionedJoinTrait(rel: RelNode): Boolean = rel match {
+    case tableScan: TableScan =>
+      tableScan.getHints.exists(_.hintName == FlinkHints.HINT_NAME_PARTITIONED_JOIN)
+    case _ => false
+  }
+
+  def addTraitIfEnablePartition(
+      enablePartition: Boolean,
+      traitSet: RelTraitSet,
+      joinInfo: JoinInfo): RelTraitSet = {
+    if (enablePartition) {
+      traitSet.plus(FlinkRelDistribution.hash(joinInfo.leftKeys))
+    } else {
+      traitSet
+    }
+  }
 }
 
 abstract class BaseSnapshotOnTableScanRule(description: String)
@@ -137,10 +157,11 @@ abstract class BaseSnapshotOnTableScanRule(description: String)
     val tableScan = call.rel[RelNode](3)
 
     validateJoin(join)
-    val temporalJoin = transform(join, input, tableScan.getTable, None)
+
+    val temporalJoin =
+      transform(join, input, tableScan.getTable, enablePartitionedJoinTrait(tableScan), None)
     call.transformTo(temporalJoin)
   }
-
 }
 
 abstract class BaseSnapshotOnCalcTableScanRule(description: String)
@@ -169,7 +190,12 @@ abstract class BaseSnapshotOnCalcTableScanRule(description: String)
     val tableScan = call.rel[RelNode](4)
 
     validateJoin(join)
-    val temporalJoin = transform(join, input, tableScan.getTable, Some(calc.getProgram))
+    val temporalJoin = transform(
+      join,
+      input,
+      tableScan.getTable,
+      enablePartitionedJoinTrait(tableScan),
+      Some(calc.getProgram))
     call.transformTo(temporalJoin)
   }
 
