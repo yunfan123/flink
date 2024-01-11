@@ -140,7 +140,6 @@ abstract class BaseSnapshotOnTableScanRule(description: String)
     val temporalJoin = transform(join, input, tableScan.getTable, None)
     call.transformTo(temporalJoin)
   }
-
 }
 
 abstract class BaseSnapshotOnCalcTableScanRule(description: String)
